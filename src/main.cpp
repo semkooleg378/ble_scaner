@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <SPIFFS.h>
 #include <string>
+#include "TemperatureMonitor.h"
 
 struct RegServerKey {
     std::string macAdr;
@@ -353,4 +354,19 @@ void setup() {
 
 void loop() {
     // Main loop can be empty, tasks handle the work
+        static unsigned long lastTempCheck = 0;
+    if (millis() - lastTempCheck >= 10000) {
+        float temperature = TemperatureMonitor::getTemperature();
+
+        char temperatureStr[10];
+        dtostrf(temperature, 6, 2, temperatureStr);
+
+        Log.notice(F("CPU Temperature: %s В°C"), temperatureStr);
+
+        size_t freeHeap = esp_get_free_heap_size();
+        // Print the free heap memory to the Serial Monitor
+        logColor(LColor::Yellow, F("Free heap memory:  %d bytes"), freeHeap);
+        lastTempCheck = millis();
+    }
+
 }
