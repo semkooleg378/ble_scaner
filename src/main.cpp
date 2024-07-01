@@ -10,6 +10,7 @@
 #include <SPIFFS.h>
 #include <string>
 #include "TemperatureMonitor.h"
+#include <vector>
 
 struct RegServerKey {
     std::string macAdr;
@@ -168,7 +169,7 @@ void logSuffix(Print *_logOutput, int logLevel) {
     _logOutput->print(colorReset);
     _logOutput->println();
 }
-
+/*
 enum class LColor {
     Reset,
     Red,
@@ -177,7 +178,7 @@ enum class LColor {
     LightBlue,
     Green,
     LightCyan
-};
+};*/
 
 void logColor(LColor color, const __FlashStringHelper *format, ...) {
     const char *colorCode;
@@ -228,6 +229,16 @@ void logColor(LColor color, const __FlashStringHelper *format, ...) {
 
 class AdvertisedDeviceCallbacks : public NimBLEAdvertisedDeviceCallbacks {
     void onResult(NimBLEAdvertisedDevice *advertisedDevice) override {
+        logColor(LColor::Green, F("Found device: %s (%s)"), advertisedDevice->toString().c_str(), advertisedDevice->getName().c_str() );
+        if (advertisedDevice->haveServiceUUID())
+        {
+            logColor(LColor::Green, F("Service device: %d === %s"), (int)advertisedDevice->isAdvertisingService(serviceUUID), serviceUUID.toString().c_str());
+        }
+        else
+        {
+            logColor(LColor::Green, F("No service"));
+        }
+        //if(advertisedDevice->getName() == "BleLock"){
         if (advertisedDevice->haveServiceUUID() && advertisedDevice->isAdvertisingService(serviceUUID)) {
             logColor(LColor::Green, F("Found device: %s"), advertisedDevice->toString().c_str());
             advDevice = advertisedDevice;
@@ -254,6 +265,7 @@ class ClientCallbacks : public NimBLEClientCallbacks {
 };
 
 void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
+        Log.notice("onNotify NimBLERemoteCharacteristic");
     std::string data((char *) pData, length);
     auto msg = MessageBase::createInstance(data);
     if (msg) {
@@ -263,8 +275,9 @@ void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pDa
 
 [[noreturn]] void connectionLoopTask(void *parameter) {
     while (true) {
-        logColor(LColor::LightBlue, F("Try subscribe2"));
-        if (pClient != nullptr) {
+        //logColor(LColor::LightBlue, F("Try subscribe2"));
+        if (0)//pClient != nullptr) 
+        {
             NimBLERemoteService *pService = pClient->getService(serviceUUID);
             if (pService) {
                 NimBLERemoteCharacteristic *pUniqueChar = pService->getCharacteristic(uniqueUUID);
@@ -280,13 +293,21 @@ void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pDa
     }
 }
 
+ClientCallbacks *clientCbk = nullptr;
+
 void connectToServer() {
-    if (pClient == nullptr) pClient = NimBLEDevice::createClient();
-    if (pClient->connect(advDevice)) {
+        logColor(LColor::Green, F("Try Connected to server"));
+    if (pClient == nullptr) 
+        pClient = NimBLEDevice::createClient();
+    if (!pClient->connect(advDevice)) 
+    {
         logColor(LColor::Green, F("Connected to server"));
 
         NimBLERemoteService *pService = pClient->getService(serviceUUID);
         if (pService) {
+            if (clientCbk==nullptr)
+                clientCbk = new ClientCallbacks();
+            pClient->setClientCallbacks(clientCbk, false);
             NimBLERemoteCharacteristic *pPublicChar = pService->getCharacteristic(publicCharUUID);
             if (pPublicChar) {
                 std::string data = pPublicChar->readValue();
@@ -297,11 +318,24 @@ void connectToServer() {
                 reg.characteristicUUID = uniqueUUID;
                 reg.macAdr = mac;
 
+                int length = reg.characteristicUUID.length();
+                char temp[128];
+                memset(temp,0,128);
+                memcpy (temp, reg.macAdr.c_str(), length);
                 regServer.insert(mac, reg);
-                logColor(LColor::Yellow, F("reg - %s --- %s"), reg.macAdr.c_str(), reg.characteristicUUID.c_str());
+                logColor(LColor::Yellow, F("reg - %s --- %s\r\n"), reg.macAdr.c_str(), temp);
 
+                /*std::vector<NimBLERemoteCharacteristic *> *listOfCharacteristics = pService->getCharacteristics();
+                for (int i =0; i < listOfCharacteristics->size(); i++)
+                {
+                    logColor(LColor::LightBlue, F("%d characteristic - %s"),i, (*listOfCharacteristics)[i]->getUUID().toString().c_str());
+                }
+                */
+
+                logColor(LColor::Yellow, F("Get characteristic"));
                 NimBLERemoteCharacteristic *pUniqueChar = pService->getCharacteristic(uniqueUUID);
                 if (pUniqueChar) {
+                    logColor(LColor::LightCyan, F("Try subscribe to characteristic"));
                     pUniqueChar->subscribe(true,
                                            [](NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData,
                                               size_t length, bool isNotify) {
@@ -309,35 +343,48 @@ void connectToServer() {
                                            });
                     logColor(LColor::Green, F("Subscribed to unique characteristic"));
                 }
+                else
+                    logColor(LColor::Red, F("Subscribe to characteristic fail"));
+                    
             }
         }
     }
 }
 
+NimBLEScan *pScan=nullptr;
+
 void setup() {
+
     Serial.begin(115200);
     Log.begin(LOG_LEVEL_VERBOSE, &Serial);
     Log.setPrefix(&logPrefix);
     Log.setSuffix(&logSuffix);
     logColor(LColor::Green, F("Starting setup..."));
     SPIFFS.begin(true);
+    delay(10000);
 
     regServer.deserialize();
 
     NimBLEDevice::init("clientBleTest");
 
-    NimBLEScan *pScan = NimBLEDevice::getScan();
-    pScan->setAdvertisedDeviceCallbacks(new AdvertisedDeviceCallbacks());
-    pScan->setActiveScan(true);
-    pScan->start(30, false);
-
     incomingQueue = xQueueCreate(10, sizeof(MessageBase *));
     outgoingQueue = xQueueCreate(10, sizeof(MessageBase *));
 
-    xTaskCreate(connectionLoopTask, "connectionLoopTask", 8192, nullptr, 1, nullptr);
+    //xTaskCreate(connectionLoopTask, "connectionLoopTask", 8192, nullptr, 1, nullptr);
+    pScan = NimBLEDevice::getScan();
 
     commandManager.registerHandler("connectToServer", []() {
         connectToServer();
+    });
+
+    commandManager.registerHandler("rescanToServer", []() {
+        //connectToServer();
+        logColor(LColor::Green, F("Handled rescanToServer event"));
+
+        extern NimBLEScan *pScan;
+        pScan->setAdvertisedDeviceCallbacks(new AdvertisedDeviceCallbacks());
+        pScan->setActiveScan(true);
+        pScan->start(30, false);
     });
 
     commandManager.registerHandler("onConnect", []() {
@@ -346,14 +393,22 @@ void setup() {
 
     commandManager.registerHandler("onDisconnect", []() {
         logColor(LColor::Yellow, F("Handled onDisconnect event, attempting to reconnect..."));
-        commandManager.sendCommand("connectToServer");
+        commandManager.sendCommand("rescanToServer");
+        //commandManager.sendCommand("connectToServer");
     });
 
     commandManager.startProcessing();
+
+
+    pScan->setAdvertisedDeviceCallbacks(new AdvertisedDeviceCallbacks());
+    pScan->setActiveScan(true);
+    pScan->start(30, false);
+
 }
 
 void loop() {
     // Main loop can be empty, tasks handle the work
+    
         static unsigned long lastTempCheck = 0;
     if (millis() - lastTempCheck >= 10000) {
         float temperature = TemperatureMonitor::getTemperature();
@@ -368,5 +423,5 @@ void loop() {
         logColor(LColor::Yellow, F("Free heap memory:  %d bytes"), freeHeap);
         lastTempCheck = millis();
     }
-
+    
 }
