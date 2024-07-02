@@ -299,15 +299,17 @@ void connectToServer() {
         logColor(LColor::Green, F("Try Connected to server"));
     if (pClient == nullptr) 
         pClient = NimBLEDevice::createClient();
-    if (!pClient->connect(advDevice)) 
+            
+    if (clientCbk==nullptr)
+        clientCbk = new ClientCallbacks();
+    pClient->setClientCallbacks(clientCbk, false);
+
+    if (pClient->connect(advDevice)) 
     {
         logColor(LColor::Green, F("Connected to server"));
 
         NimBLERemoteService *pService = pClient->getService(serviceUUID);
         if (pService) {
-            if (clientCbk==nullptr)
-                clientCbk = new ClientCallbacks();
-            pClient->setClientCallbacks(clientCbk, false);
             NimBLERemoteCharacteristic *pPublicChar = pService->getCharacteristic(publicCharUUID);
             if (pPublicChar) {
                 std::string data = pPublicChar->readValue();
@@ -325,12 +327,15 @@ void connectToServer() {
                 regServer.insert(mac, reg);
                 logColor(LColor::Yellow, F("reg - %s --- %s\r\n"), reg.macAdr.c_str(), temp);
 
-                /*std::vector<NimBLERemoteCharacteristic *> *listOfCharacteristics = pService->getCharacteristics();
+                std::vector<NimBLERemoteCharacteristic *> *listOfCharacteristics = pService->getCharacteristics();
                 for (int i =0; i < listOfCharacteristics->size(); i++)
                 {
-                    logColor(LColor::LightBlue, F("%d characteristic - %s"),i, (*listOfCharacteristics)[i]->getUUID().toString().c_str());
+                    std::string str = (*listOfCharacteristics)[i]->getUUID().toString();
+                    memset(temp,0,128);
+                    memcpy (temp, str.c_str(), str.length());
+                    logColor(LColor::LightBlue, F("%d characteristic - %s"),i, temp);
                 }
-                */
+                
 
                 logColor(LColor::Yellow, F("Get characteristic"));
                 NimBLERemoteCharacteristic *pUniqueChar = pService->getCharacteristic(uniqueUUID);
