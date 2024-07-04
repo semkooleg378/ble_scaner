@@ -25,32 +25,29 @@ public:
     using CommandHandler = std::function<void()>;
 
     void registerHandler(const std::string &command, CommandHandler handler) {
-        logColor (LColor::LightBlue, F("registerHandler"));
+        logColor(LColor::LightBlue, F("registerHandler"));
         handlers[command] = std::move(handler);
     }
 
     void sendCommand(const std::string &command) {
-        logColor (LColor::LightBlue, F("sendCommand"));
-        std::string *obj = new std::string(command);
+        logColor(LColor::LightBlue, F("sendCommand"));
+        auto *obj = new std::string(command);
         //xQueueSend(commandQueue, &command, portMAX_DELAY);
         xQueueSend(commandQueue, &obj, portMAX_DELAY);
     }
 
     [[noreturn]] void processCommands() {
-        logColor (LColor::LightBlue, F("processCommands"));
+        logColor(LColor::LightBlue, F("processCommands"));
         TickType_t xDelay = 10 / portTICK_PERIOD_MS;
-        if (xDelay==0)
-            xDelay=1;
         while (true) {
             std::string *command;
             //logColor (LColor::LightCyan, F("proc com loop"));
-            if (xQueueReceive(commandQueue, &command, portMAX_DELAY) == pdTRUE) 
-            {
-                logColor (LColor::LightBlue, F("processCommands BEFORE"));
+            if (xQueueReceive(commandQueue, &command, portMAX_DELAY) == pdTRUE) {
+                logColor(LColor::LightBlue, F("processCommands BEFORE"));
                 if (handlers.find(*command) != handlers.end()) {
                     handlers[*command]();
-                delete command;
-                logColor (LColor::LightBlue, F("processCommands AFTER"));
+                    delete command;
+                    logColor(LColor::LightBlue, F("processCommands AFTER"));
                 }
             }
             vTaskDelay(xDelay);
@@ -58,7 +55,7 @@ public:
     }
 
     void startProcessing() {
-        logColor (LColor::LightBlue, F("startProcessing"));
+        logColor(LColor::LightBlue, F("startProcessing"));
         xTaskCreate([](void *parameter) {
             static_cast<CommandManager *>(parameter)->processCommands();
         }, "CommandProcessorTask", 8192, this, 1, nullptr);
