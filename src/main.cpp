@@ -273,12 +273,15 @@ void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pDa
     }
 }
 
+static bool isNeedSubscribe = false;
+
 [[noreturn]] void connectionLoopTask(void *parameter) {
     while (true) {
         //logColor(LColor::LightBlue, F("Try subscribe2"));
-        if (0)//pClient != nullptr) 
+        if (pClient != nullptr && isNeedSubscribe) 
         {
-            NimBLERemoteService *pService = pClient->getService(serviceUUID);
+            NimBLERemoteService *pService = pClient->getService(serviceUUID);      
+
             if (pService) {
                 NimBLERemoteCharacteristic *pUniqueChar = pService->getCharacteristic(uniqueUUID);
                 if (pUniqueChar) {
@@ -286,10 +289,16 @@ void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pDa
                         onNotify(pBLERemoteCharacteristic, pData, length, isNotify);
                     });
                     logColor(LColor::Green, F("Subscribed to unique characteristic %s"), uniqueUUID.c_str());
+                    isNeedSubscribe = false;
+                }
+                else
+                {
+                    logColor(LColor::Red, F("Subscribed to unique characteristic %s failure - reconnect"), uniqueUUID.c_str());
+                    pClient->disconnect();
                 }
             }
         }
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(200 / portTICK_PERIOD_MS);
     }
 }
 
@@ -327,6 +336,8 @@ void connectToServer() {
                 regServer.insert(mac, reg);
                 logColor(LColor::Yellow, F("reg - %s --- %s\r\n"), reg.macAdr.c_str(), temp);
 
+                //vTaskDelay(100/portTICK_PERIOD_MS);
+
                 std::vector<NimBLERemoteCharacteristic *> *listOfCharacteristics = pService->getCharacteristics();
                 for (int i =0; i < listOfCharacteristics->size(); i++)
                 {
@@ -349,7 +360,10 @@ void connectToServer() {
                     logColor(LColor::Green, F("Subscribed to unique characteristic"));
                 }
                 else
+                {
                     logColor(LColor::Red, F("Subscribe to characteristic fail"));
+                    isNeedSubscribe=true;
+                }
                     
             }
         }
@@ -375,7 +389,8 @@ void setup() {
     incomingQueue = xQueueCreate(10, sizeof(MessageBase *));
     outgoingQueue = xQueueCreate(10, sizeof(MessageBase *));
 
-    //xTaskCreate(connectionLoopTask, "connectionLoopTask", 8192, nullptr, 1, nullptr);
+    xTaskCreate(connectionLoopTask, "connectionLoopTask", 8192, nullptr, 1, nullptr);
+    
     pScan = NimBLEDevice::getScan();
 
     commandManager.registerHandler("connectToServer", []() {
