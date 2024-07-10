@@ -2,7 +2,7 @@
 #define REQ_REG_KEY_H
 
 #include "MessageBase.h"
-
+/*
 class ReqRegKey : public MessageBase {
 public:
     std::string key;
@@ -11,5 +11,5 @@ public:
     nlohmann::json toJson() const override;
     std::string serialize() const override;
 };
-
+*/
 #endif // REQ_REG_KEY_H

@@ -12,6 +12,15 @@
 #include "TemperatureMonitor.h"
 #include <vector>
 
+#include "ReqRes.h"
+#include "Blelock.h"
+
+BleLock key("BleKey");
+std::string getMacSelf()
+{
+    return key.getMacAddress();
+}
+
 struct RegServerKey {
     std::string macAdr;
     std::string characteristicUUID;
@@ -78,6 +87,15 @@ public:
         file.close();
     }
 
+    bool getServerDataFirst( std::string &name/*, RegServerKey &val*/) {
+        if (!uniqueServers.empty()){
+            name = (*uniqueServers.begin()).first;        
+            //val = (*uniqueServers.begin()).second;
+            return true;
+        }
+        return false;
+    }
+
     bool getServerData(const std::string &name, RegServerKey &val) {
         if (uniqueServers.find(name) != uniqueServers.end()) {
             val = (*uniqueServers.find(name)).second;
@@ -103,6 +121,13 @@ public:
 };
 
 ServerReg regServer;
+std::string getMacAddress()
+{
+    std::string name;
+    regServer.getServerDataFirst(name);
+    return name;
+}
+
 
 // UUIDs
 static BLEUUID serviceUUID("abcd");
@@ -110,7 +135,7 @@ static BLEUUID publicCharUUID("1234");
 
 NimBLEAdvertisedDevice *advDevice = nullptr;
 std::string uniqueUUID;
-QueueHandle_t incomingQueue;
+//QueueHandle_t incomingQueue;
 QueueHandle_t outgoingQueue;
 
 CommandManager commandManager;
@@ -226,6 +251,52 @@ void logColor(LColor color, const __FlashStringHelper *format, ...) {
     Serial.println();
 }
 
+/**************************/
+SecureConnection con;
+
+//QueueHandle_t outgoingQueue;
+QueueHandle_t responseQueue;
+#if 0
+MessageBase* BleLock_request(MessageBase* requestMessage, const std::string& destAddr, uint32_t timeout)  {
+    requestMessage->sourceAddress ="";// macAddress; // Use the stored MAC address
+    requestMessage->destinationAddress = destAddr;
+    requestMessage->requestUUID = requestMessage->generateUUID(); // Generate a new UUID for the request
+
+    if (xQueueSend(outgoingQueue, &requestMessage, portMAX_DELAY) != pdPASS) {
+        Log.error(F("Failed to send request to the outgoing queue"));
+        return nullptr;
+    }
+
+    uint32_t startTime = xTaskGetTickCount();
+    std::string* receivedMessage;
+
+    while (true) {
+        uint32_t elapsed = xTaskGetTickCount() - startTime;
+        if (elapsed >= pdMS_TO_TICKS(timeout)) {
+            // Timeout reached
+            return nullptr; 
+        }
+
+        // Peek at the queue to see if there is a message
+        if (xQueuePeek(responseQueue, &receivedMessage, pdMS_TO_TICKS(timeout) - elapsed) == pdTRUE) {
+            // Create an instance of MessageBase from the received message
+            MessageBase* instance = MessageBase::createInstance(*receivedMessage);
+
+            // Check if the source address and requestUUID match
+            if (instance->sourceAddress == destAddr && instance->requestUUID == requestMessage->requestUUID) {
+                // Remove the item from the queue after confirming the source address and requestUUID match
+                xQueueReceive(responseQueue, &receivedMessage, 0);
+                delete receivedMessage; // Delete the received message pointer
+                return instance;
+            }
+            delete instance;
+        }
+    }
+
+    return nullptr; // This should never be reached, but it's here to satisfy the compiler
+}
+#endif
+/**************/
 
 class AdvertisedDeviceCallbacks : public NimBLEAdvertisedDeviceCallbacks {
     void onResult(NimBLEAdvertisedDevice *advertisedDevice) override {
@@ -266,11 +337,14 @@ class ClientCallbacks : public NimBLEClientCallbacks {
 
 void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
         Log.notice("onNotify NimBLERemoteCharacteristic");
-    std::string data((char *) pData, length);
+    //std::string data((char *) pData, length);
+    std::string *data = new std::string((char *) pData, length);
+    xQueueSend(key.jsonParsingQueue, &data, portMAX_DELAY);
+    /*
     auto msg = MessageBase::createInstance(data);
     if (msg) {
-        xQueueSend(incomingQueue, &msg, portMAX_DELAY);
-    }
+        xQueueSend(responseQueue, &msg, portMAX_DELAY);
+    }*/
 }
 
 static bool isNeedSubscribe = false;
@@ -290,6 +364,9 @@ static bool isNeedSubscribe = false;
                     });
                     logColor(LColor::Green, F("Subscribed to unique characteristic %s"), uniqueUUID.c_str());
                     isNeedSubscribe = false;
+                    // init message loop
+                    ReqRegKey *msg = new ReqRegKey;
+                    msg->processRequest (&key);
                 }
                 else
                 {
@@ -302,7 +379,58 @@ static bool isNeedSubscribe = false;
     }
 }
 
+/**
+[noreturn] void proccessMessageTask ()
+{
+    while (true) {
+        MessageBase *result = MessageBase::processRequest(nullptr);
+        if (result!=nullptr)
+            xQueueCRSend(outgoingQueue,&result,portMAX_DELAY);
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+}
+*/
+[[noreturn]] void sendOpenTask (void *parameter)
+{
+    while (true) {
+        if (key.secureConnection.aesKeys.size() > 0)
+        {
+            OpenRequest *msg = new OpenRequest;
+            msg->processRequest (&key);
+        }
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
+    }
+}
+
+[[noreturn]] void generateRandomCommandsLoopTask(void *parameter) {
+    while (true) {
+        if (pClient != nullptr)
+        {
+            // connected
+            // get characteristic 
+            NimBLERemoteService *pService = pClient->getService(serviceUUID);
+            if (pService!=nullptr)
+            {
+                NimBLERemoteCharacteristic *pUniqueChar = pService->getCharacteristic(uniqueUUID);
+                if (pUniqueChar) 
+                {
+                    std::string randoCommand;
+                    int nRandVal = random(2);
+                    if (nRandVal==0)
+                        randoCommand = "open";
+                    else
+                        randoCommand = "close";
+
+                    pUniqueChar->writeValue (randoCommand.c_str());
+                }
+            }
+        } 
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
+    }
+}
+
 ClientCallbacks *clientCbk = nullptr;
+NimBLERemoteCharacteristic *pUniqueChar = nullptr;
 
 void connectToServer() {
         logColor(LColor::Green, F("Try Connected to server"));
@@ -349,7 +477,7 @@ void connectToServer() {
                 
 
                 logColor(LColor::Yellow, F("Get characteristic"));
-                NimBLERemoteCharacteristic *pUniqueChar = pService->getCharacteristic(uniqueUUID);
+                pUniqueChar = pService->getCharacteristic(uniqueUUID);
                 if (pUniqueChar) {
                     logColor(LColor::LightCyan, F("Try subscribe to characteristic"));
                     pUniqueChar->subscribe(true,
@@ -358,11 +486,16 @@ void connectToServer() {
                                                onNotify(pBLERemoteCharacteristic, pData, length, isNotify);
                                            });
                     logColor(LColor::Green, F("Subscribed to unique characteristic"));
+                    OpenRequest *req =  new OpenRequest;
+                    req->destinationAddress= mac;
+                    req->sourceAddress = getMacSelf();
+                    xQueueSend (outgoingQueue, &req, portMAX_DELAY);
                 }
                 else
                 {
                     logColor(LColor::Red, F("Subscribe to characteristic fail"));
-                    isNeedSubscribe=true;
+                    //isNeedSubscribe=true;
+                    pClient->disconnect();
                 }
                     
             }
@@ -371,6 +504,7 @@ void connectToServer() {
 }
 
 NimBLEScan *pScan=nullptr;
+
 
 void setup() {
 
@@ -385,12 +519,14 @@ void setup() {
     regServer.deserialize();
 
     NimBLEDevice::init("clientBleTest");
+    key.setup();
 
-    incomingQueue = xQueueCreate(10, sizeof(MessageBase *));
-    outgoingQueue = xQueueCreate(10, sizeof(MessageBase *));
+    responseQueue = key.responseQueue;//xQueueCreate(10, sizeof(MessageBase *));
+    outgoingQueue = key.outgoingQueue; //xQueueCreate(10, sizeof(MessageBase *));
 
-    xTaskCreate(connectionLoopTask, "connectionLoopTask", 8192, nullptr, 1, nullptr);
-    
+    //xTaskCreate(connectionLoopTask, "connectionLoopTask", 8192, nullptr, 1, nullptr);
+     xTaskCreate(sendOpenTask, "sendOpenTask", 8192, nullptr, 1, nullptr);
+
     pScan = NimBLEDevice::getScan();
 
     commandManager.registerHandler("connectToServer", []() {

@@ -1,43 +1,103 @@
 #include "MessageBase.h"
+#include <sstream>
+#include <utility>
+#include <random>
+#include "Arduino.h"
 
-MessageBase::MessageBase(const std::string& type, const std::string& sourceAddress, const std::string& destinationAddress)
-    : type(type), sourceAddress(sourceAddress), destinationAddress(destinationAddress) {}
 
-nlohmann::json MessageBase::toJson() const {
-    nlohmann::json jsonObj;
-    jsonObj["type"] = type;
-    jsonObj["sourceAddress"] = sourceAddress;
-    jsonObj["destinationAddress"] = destinationAddress;
-    return jsonObj;
+SemaphoreHandle_t bleMutex{};
+
+std::unordered_map<std::string, MessageBase::Constructor> MessageBase::constructors;
+
+void MessageBase::registerConstructor(const MessageType& type, Constructor constructor) {
+    constructors[ToString(type)] = std::move(constructor);
 }
 
-std::string MessageBase::serialize() const {
-    return toJson().dump();
-}
-/**
-std::unique_ptr<MessageBase> MessageBase::createInstance(const std::string& jsonString) {
-    nlohmann::json jsonObj = nlohmann::json::parse(jsonString);
-    std::string type = jsonObj["type"];
-    std::string sourceAddress = jsonObj["sourceAddress"];
-    std::string destinationAddress = jsonObj["destinationAddress"];
-    if (type == "resOk") {
-        bool status = jsonObj["status"];
-        return std::make_unique<ResOk>(sourceAddress, destinationAddress, status);
+std::string MessageBase::getRandomField()
+{
+    std::string result;
+    for (int i =0; i < 16; i++)
+    {
+        result += (char)(random(90)+32);
     }
-    // Add other message types as needed
-    return std::make_unique<MessageBase>(type, sourceAddress, destinationAddress);
-}
-*/
-
-ResOk::ResOk(const std::string& sourceAddress, const std::string& destinationAddress, bool status)
-    : MessageBase("resOk", sourceAddress, destinationAddress), status(status) {}
-
-nlohmann::json ResOk::toJson() const {
-    nlohmann::json jsonObj = MessageBase::toJson(); // Get base class JSON
-    jsonObj["status"] = status;
-    return jsonObj;
+    return result;
 }
 
-std::string ResOk::serialize() const {
-    return toJson().dump();
+void MessageBase::setEncryptedCommand( std::string &encryptedOpenCommand)
+{
+    extern SecureConnection con;
+    std::string res = con.encryptMessageAES (encryptedOpenCommand,"UUUID");
+    encryptedOpenCommand = res;
 }
+void MessageBase::setDecryptedCommand( std::string &encryptedOpenCommand)
+{
+    extern SecureConnection con;
+    std::string res = con.decryptMessageAES (encryptedOpenCommand,"UUUID");
+    encryptedOpenCommand = res;
+}
+
+
+MessageBase* MessageBase::createInstance(const std::string& input) {
+    Serial.println("Try parsing");
+    try {
+        json doc = json::parse(input);
+
+        // Проверка наличия поля "type"
+        if (!doc.contains("type") || !doc["type"].is_string()) {
+            Serial.println("Invalid message: Missing or incorrect 'type' field.");
+            return nullptr;
+        }
+
+        auto it = constructors.find(doc["type"]);
+        if (it != constructors.end()) {
+            MessageBase* instance = it->second();
+            instance->deserialize(input);
+            return instance;
+        } else {
+            Serial.println("Unknown message type.");
+            return nullptr;
+        }
+    } catch (json::parse_error& e) {
+        Serial.printf("Failed to parse JSON: %s\n", e.what());
+        return nullptr;
+    } catch (std::exception& e) {
+        Serial.printf("Exception: %s\n", e.what());
+        return nullptr;
+    } catch (...) {
+        Serial.println("Unknown error occurred.");
+        return nullptr;
+    }
+}
+
+std::string MessageBase::serialize() {
+    json doc;
+    doc["sourceAddress"] = sourceAddress;
+    doc["destinationAddress"] = destinationAddress;
+    doc["type"] = ToString(type);
+    doc["requestUUID"] = requestUUID; // Serialize the request UUID
+
+    serializeExtraFields(doc);
+    return doc.dump();
+}
+
+
+void MessageBase::deserialize(const std::string& input) {
+    auto doc = json::parse(input);
+    sourceAddress = doc["sourceAddress"];
+    destinationAddress = doc["destinationAddress"];
+    type = FromString(doc["type"]);
+    requestUUID = doc["requestUUID"]; // Deserialize the request UUID
+
+    deserializeExtraFields(doc);
+}
+
+std::string MessageBase::generateUUID() {
+    static std::random_device rd;
+    static std::mt19937 generator(rd());
+    static std::uniform_int_distribution<uint32_t> distribution(0, 0xFFFFFFFF);
+
+    std::ostringstream oss;
+    oss << std::hex << std::setw(8) << std::setfill('0') << distribution(generator);
+    return oss.str();
+}
+

@@ -1,5 +1,5 @@
 #include "ReqRegKey.h"
-
+/*
 ReqRegKey::ReqRegKey(const std::string& sourceAddress, const std::string& destinationAddress, const std::string& key)
     : MessageBase("reqRegKey", sourceAddress, destinationAddress), key(key) {}
 
@@ -29,3 +29,4 @@ std::unique_ptr<MessageBase> MessageBase::createInstance(const std::string& json
     // Add other message types as needed
     return std::make_unique<MessageBase>(type, sourceAddress, destinationAddress);
 }
+*/
