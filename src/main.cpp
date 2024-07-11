@@ -467,7 +467,16 @@ static void notifyCallback(
 }
 */
 
-static auto notifyCallback = [&](
+/*static auto notifyCallback = [&](
+    BLERemoteCharacteristic* pBLERemoteCharacteristic,
+    uint8_t* pData,
+    size_t length,
+    bool isNotify)
+{
+    logColor(LColor::LightRed, F("OnNotify"));
+    onNotify(pBLERemoteCharacteristic, pData, length, isNotify);
+};**/
+static auto notifyCallback = [](
     BLERemoteCharacteristic* pBLERemoteCharacteristic,
     uint8_t* pData,
     size_t length,
