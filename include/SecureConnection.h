@@ -22,6 +22,36 @@ public:
         mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *) pers, strlen(pers));
     }
 
+    static std::string str2hex (std::string input)
+    {
+        const char* hexDigits = "0123456789abcdef";
+        std::string output;
+        output.reserve(input.size() * 2); // Reserve space for the output string
+
+        for (unsigned char c : input) {
+            output.push_back(hexDigits[c >> 4]); // Get the upper 4 bits
+            output.push_back(hexDigits[c & 0x0F]); // Get the lower 4 bits
+        }
+        return output;    
+    }
+    static std::string hex2str (std::string input)
+    {
+        std::string output;
+        output.reserve(input.size() / 2); // Reserve space for the output string
+
+        for (size_t i = 0; i < input.size(); i += 2) {
+            char highNibble = input[i];
+            char lowNibble = input[i + 1];
+
+            // Convert hex characters to their numeric values
+            highNibble = (highNibble > '9') ? (highNibble - 'a' + 10) : (highNibble - '0');
+            lowNibble = (lowNibble > '9') ? (lowNibble - 'a' + 10) : (lowNibble - '0');
+
+            output.push_back((highNibble << 4) | lowNibble); // Combine the two nibbles
+        }
+        return output;        
+    }
+
     void generateRSAKeys(const std::string& uuid) {
         mbedtls_pk_context pk;
         mbedtls_pk_init(&pk);

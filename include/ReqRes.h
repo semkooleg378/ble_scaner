@@ -3,27 +3,74 @@
 
 #define MessageMaxDelay 30000
 
+extern bool isOkRes;
+
 class ResOk : public MessageBase {
 public:
     bool status{};
 
     ResOk() {
-        type = MessageType::ResOk;
+        type = MessageType::resOk;
+        requestUUID = generateUUID();
     }
 
     explicit ResOk(bool status) : status(status) {
-        type = MessageType::ResOk;
+        type = MessageType::resOk;
     }
 
 protected:
     void serializeExtraFields(json &doc) override {
         doc["status"] = status;
-        Log.notice("Serialized status: %d\n", status);
+        Serial.printf("Serialized status: %d\n", status);
     }
 
     void deserializeExtraFields(const json &doc) override {
         status = doc["status"];
-        Log.notice("Deserialized status: %d\n", status);
+        Serial.printf("Deserialized status: %d\n", status);
+    }
+    MessageBase *processRequest(void *context) override {
+        return nullptr;
+    }
+};
+
+
+class ResKey : public MessageBase {
+public:
+    bool status{};
+    std::string key{};
+
+    ResKey() {
+        type = MessageType::resKey;
+        requestUUID = generateUUID();
+    }
+
+    explicit ResKey(bool status, std::string newKey) : status(status), key(newKey) {
+        type = MessageType::resKey;
+    }
+
+protected:
+    void serializeExtraFields(json &doc) override {
+        doc["status"] = status;
+        doc["key"] = SecureConnection::str2hex(key);
+        Serial.printf("Serialized status: %d  key:%s\n", status, key.c_str());
+    }
+
+    void deserializeExtraFields(const json &doc) override {
+        status = doc["status"];
+        key = SecureConnection::hex2str(doc["key"]);
+        Serial.printf("Deserialized status: %d  key:%s\n", status, key.c_str());
+    }
+    MessageBase *processRequest(void *context) override {
+        auto lock = static_cast<BleLock *>(context);
+        isOkRes = true;   
+        std::vector<uint8_t> vKey;
+        std::string keyReal = SecureConnection::hex2str(key);
+        for (int i = 0; i < keyReal.length(); i++)
+        {
+            vKey.push_back(keyReal[i]);
+        }
+        lock->secureConnection.aesKeys["UUID"] = vKey;         
+        return nullptr;
     }
 };
 
@@ -35,6 +82,7 @@ public:
 
     ReqRegKey() {
         type = MessageType::reqRegKey;
+        requestUUID = generateUUID();
     }
 
     MessageBase *processRequest(void *context) override {
@@ -43,21 +91,23 @@ public:
             //lock->awaitingKeys.insert(key);
             xSemaphoreGive(lock->bleMutex);
         }
-        auto res = new ResOk();
+        auto res = new ResKey();
         res->destinationAddress = key;
         res->sourceAddress = key;
+        res->status = 0;
+        res->key =  key;
         return res;
     }
 
 protected:
     void serializeExtraFields(json &doc) override {
-        doc["key"] = key;
-        Log.notice("Serialized key: %s\n", key.c_str());
+        doc["key"] = SecureConnection::str2hex(key);
+        Serial.printf("Serialized key: %s\n", key.c_str());
     }
 
     void deserializeExtraFields(const json &doc) override {
-        key = doc["key"];
-        Log.notice("Deserialized key: %s\n", key.c_str());
+        key = SecureConnection::hex2str(doc["key"]);
+        Serial.printf("Deserialized key: %s\n", key.c_str());
     }
 };
 
@@ -68,6 +118,7 @@ public:
 
     OpenCommand() {
         type = MessageType::OpenCommand;
+        requestUUID = generateUUID();
     }
 
     void setRandomField(std::string randomFieldVal)
@@ -110,6 +161,7 @@ public:
 
     SecurityCheckRequestest() {
         type = MessageType::SecurityCheckRequestest;
+        requestUUID = generateUUID();
     }
 
     void setRandomField(std::string randomFieldVal)
@@ -158,6 +210,7 @@ public:
 
     OpenRequest() {
         type = MessageType::OpenRequest;
+        requestUUID = generateUUID();
     }
 
     void setRandomField(std::string randomFieldVal)

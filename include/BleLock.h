@@ -14,7 +14,18 @@
 //#include <WiFi.h>
 
 using json = nlohmann::json;
-
+/**
+enum class LColor {
+    Reset,
+    Red,
+    LightRed,
+    Yellow,
+    LightBlue,
+    Green,
+    LightCyan
+};
+void logColor(LColor color, const __FlashStringHelper *format, ...) ;
+*/
 class BleLock {
 public:
     explicit BleLock(std::string keyName);
@@ -61,6 +72,5 @@ private:
     std::string macAddress;
     std::string key;
 };
-
 
 #endif // BLE_LOCK_H

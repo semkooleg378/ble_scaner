@@ -322,14 +322,17 @@ class AdvertisedDeviceCallbacks : public NimBLEAdvertisedDeviceCallbacks {
 };
 
 NimBLEClient *pClient = nullptr;
+    bool isConnected = false;
 
 class ClientCallbacks : public NimBLEClientCallbacks {
     void onConnect(NimBLEClient *pclient) override {
         Log.notice("Connected to the server.");
         commandManager.sendCommand("onConnect");
+        isConnected = true;
     };
 
     void onDisconnect(NimBLEClient *pclient) override {
+        isConnected = false;
         Log.notice("Disconnected from the server.");
         commandManager.sendCommand("onDisconnect");
     };
@@ -338,8 +341,21 @@ class ClientCallbacks : public NimBLEClientCallbacks {
 void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
         Log.notice("onNotify NimBLERemoteCharacteristic");
     //std::string data((char *) pData, length);
+    extern std::string servMac;
     std::string *data = new std::string((char *) pData, length);
-    xQueueSend(key.jsonParsingQueue, &data, portMAX_DELAY);
+    std::string *addr = new std::string (servMac);
+    std::tuple<std::string *, std::string *> *messageAndMac = new std::tuple<std::string *, std::string *>(data,addr); 
+
+    logColor (LColor::Yellow, F("Notification: %s"), data->c_str());
+    if (xQueueSend(key.jsonParsingQueue, &messageAndMac, portMAX_DELAY) != pdPASS)
+    {
+        logColor (LColor::Yellow, F("Notification NOT stored"));
+    }
+    else
+        {
+        logColor (LColor::Yellow, F("Notification stored"));
+    }
+
     /*
     auto msg = MessageBase::createInstance(data);
     if (msg) {
@@ -347,7 +363,10 @@ void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pDa
     }*/
 }
 
+NimBLERemoteCharacteristic *pUniqueChar = nullptr;
+
 static bool isNeedSubscribe = false;
+NimBLERemoteCharacteristic *pUniqueCharExt=nullptr;
 
 [[noreturn]] void connectionLoopTask(void *parameter) {
     while (true) {
@@ -360,13 +379,16 @@ static bool isNeedSubscribe = false;
                 NimBLERemoteCharacteristic *pUniqueChar = pService->getCharacteristic(uniqueUUID);
                 if (pUniqueChar) {
                     pUniqueChar->subscribe(true, [](NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
+                        logColor(LColor::LightRed, F("OnNotify"));
                         onNotify(pBLERemoteCharacteristic, pData, length, isNotify);
                     });
                     logColor(LColor::Green, F("Subscribed to unique characteristic %s"), uniqueUUID.c_str());
                     isNeedSubscribe = false;
                     // init message loop
-                    ReqRegKey *msg = new ReqRegKey;
-                    msg->processRequest (&key);
+                    pUniqueCharExt = pUniqueChar;
+                    
+                    //ReqRegKey *msg = new ReqRegKey;
+                    //msg->processRequest (&key);
                 }
                 else
                 {
@@ -430,7 +452,31 @@ static bool isNeedSubscribe = false;
 }
 
 ClientCallbacks *clientCbk = nullptr;
-NimBLERemoteCharacteristic *pUniqueChar = nullptr;
+bool isOkRes = false;
+std::string servMac;
+
+/*
+static void notifyCallback(
+  BLERemoteCharacteristic* pBLERemoteCharacteristic,
+  uint8_t* pData,
+  size_t length,
+  bool isNotify)
+{
+    logColor(LColor::LightRed, F("OnNotify"));
+    onNotify(pBLERemoteCharacteristic, pData, length, isNotify);
+}
+*/
+
+static auto notifyCallback = [&](
+    BLERemoteCharacteristic* pBLERemoteCharacteristic,
+    uint8_t* pData,
+    size_t length,
+    bool isNotify)
+{
+    logColor(LColor::LightRed, F("OnNotify"));
+    onNotify(pBLERemoteCharacteristic, pData, length, isNotify);
+};
+
 
 void connectToServer() {
         logColor(LColor::Green, F("Try Connected to server"));
@@ -456,6 +502,7 @@ void connectToServer() {
                 RegServerKey reg;
                 reg.characteristicUUID = uniqueUUID;
                 reg.macAdr = mac;
+                servMac = mac;
 
                 int length = reg.characteristicUUID.length();
                 char temp[128];
@@ -479,21 +526,38 @@ void connectToServer() {
                 logColor(LColor::Yellow, F("Get characteristic"));
                 pUniqueChar = pService->getCharacteristic(uniqueUUID);
                 if (pUniqueChar) {
-                    logColor(LColor::LightCyan, F("Try subscribe to characteristic"));
-                    pUniqueChar->subscribe(true,
-                                           [](NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData,
-                                              size_t length, bool isNotify) {
-                                               onNotify(pBLERemoteCharacteristic, pData, length, isNotify);
-                                           });
-                    logColor(LColor::Green, F("Subscribed to unique characteristic"));
-                    OpenRequest *req =  new OpenRequest;
-                    req->destinationAddress= mac;
-                    req->sourceAddress = getMacSelf();
-                    xQueueSend (outgoingQueue, &req, portMAX_DELAY);
+                    logColor(LColor::LightCyan, F("Try subscribe to characteristic. Can notify = %d"),pUniqueChar->canNotify());
+                    bool success = pUniqueChar->subscribe(true,notifyCallback);
+                                           //[](NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData,
+                                           //   size_t length, bool isNotify) {
+                                           //     logColor(LColor::LightRed, F("OnNotify"));
+                                           //     onNotify(pBLERemoteCharacteristic, pData, length, isNotify);
+                                           //});                    
+                    if (success) {
+                        //uint8_t val[] = {0x01, 0x00}; 
+                        //if(!notifications) 
+                        //val[0] = 0x02; 
+                        //BLERemoteDescriptor* desc = pUniqueChar->getDescriptor(BLEUUID((uint16_t)0x2902)); 
+                        //desc->writeValue(val, 2); 
+                        
+                        logColor(LColor::Green, F("Subscribed to unique characteristic"));
+                        pUniqueCharExt = pUniqueChar;
+
+                        ReqRegKey *req =  new ReqRegKey;
+                        req->destinationAddress= mac;
+                        req->sourceAddress = getMacSelf();
+                        //std::string *pStr = new std::string;
+                        //*pStr = req.serialize();
+                        xQueueSend (outgoingQueue, &req, portMAX_DELAY);
+                    }
+                    else{
+                        logColor(LColor::Red, F("Subscribe to characteristic failed"));
+                        pClient->disconnect();
+                    }
                 }
                 else
                 {
-                    logColor(LColor::Red, F("Subscribe to characteristic fail"));
+                    logColor(LColor::Red, F("Subscribe to characteristic fail no characteristic found"));
                     //isNeedSubscribe=true;
                     pClient->disconnect();
                 }
@@ -504,6 +568,24 @@ void connectToServer() {
 }
 
 NimBLEScan *pScan=nullptr;
+
+
+[[noreturn]] void scenrioTempTask (void *parameters)
+{
+    while (true)
+    {
+        if (isOkRes)
+        {
+            OpenRequest *msg = new OpenRequest;
+            msg->destinationAddress = servMac;
+            msg->sourceAddress = key.getMacAddress();
+            //std::string *pStr = new std::string;
+            //*pStr = msg.serialize();
+            xQueueSend (outgoingQueue, &msg, portMAX_DELAY);
+        }
+        vTaskDelay (5000/ portTICK_PERIOD_MS);
+    }
+}
 
 
 void setup() {
@@ -555,10 +637,13 @@ void setup() {
 
     commandManager.startProcessing();
 
+    xTaskCreate(scenrioTempTask, "scenrioTempTask", 8192, nullptr, 1, nullptr);
+    
 
     pScan->setAdvertisedDeviceCallbacks(new AdvertisedDeviceCallbacks());
     pScan->setActiveScan(true);
     pScan->start(30, false);
+    
 
 }
 

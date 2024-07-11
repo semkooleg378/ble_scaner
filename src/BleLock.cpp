@@ -1,5 +1,6 @@
 #include "BleLock.h"
 #include "ReqRes.h"
+#include "CommandManager.h"
 
 // Callbacks Implementation
 void printCharacteristics(NimBLEService *pService) {
@@ -28,16 +29,6 @@ void printCharacteristics(NimBLEService *pService) {
     }
 }
 
-enum class LColor {
-    Reset,
-    Red,
-    LightRed,
-    Yellow,
-    LightBlue,
-    Green,
-    LightCyan
-};
-void logColor(LColor color, const __FlashStringHelper *format, ...) ;
 
 MessageBase *BleLock::request(MessageBase *requestMessage, const std::string &destAddr, uint32_t timeout) const {
     requestMessage->sourceAddress = macAddress; // Use the stored MAC address
@@ -147,30 +138,31 @@ void BleLock::initializeMutex() {
 [[noreturn]] void BleLock::outgoingMessageTask(void *pvParameter) {
     auto *bleLock = static_cast<BleLock *>(pvParameter);
     MessageBase *responseMessage;
+    extern NimBLERemoteCharacteristic *pUniqueCharExt;
 
     Log.verbose(F("Starting outgoingMessageTask..."));
+    extern bool isConnected;
+
     while (true) {
+        if (!isConnected)
         Log.verbose(F("outgoingMessageTask: Waiting to receive message from queue..."));
 
         if (xQueueReceive(bleLock->outgoingQueue, &responseMessage, portMAX_DELAY) == pdTRUE) {
+            logColor(LColor::Green, F("Outgoing queue begin Free heap memory :  %d bytes"), esp_get_free_heap_size());
+
             Log.verbose(F("Message received from queue"));
 
-            Log.verbose(F("BleLock::responseMessageTask msg: %s %s"), responseMessage->destinationAddress.c_str(),
-                        ToString(responseMessage->type));
+            Log.verbose(F("BleLock::responseMessageTask msg: %s"), responseMessage->destinationAddress.c_str());
 
-            // Lock the mutex for advertising and characteristic operations
-            Log.verbose(F("outgoingMessageTask: Waiting for Mutex"));
-            xSemaphoreTake(bleLock->bleMutex, portMAX_DELAY);
             Log.verbose(F("outgoingMessageTask: Mutex lock"));
 
-            //auto it = bleLock->uniqueCharacteristics.find(responseMessage->destinationAddress);
-            extern NimBLERemoteCharacteristic *pUniqueChar;
-            if (1)//it != bleLock->uniqueCharacteristics.end())
+            //auto it = bleLock->pairedDevices.find(responseMessage->destinationAddress);
+            if (1)//it != bleLock->pairedDevices.end()) 
             {
                 Log.verbose(F("Destination address found in uniqueCharacteristics %s"),
                             responseMessage->destinationAddress.c_str());
 
-                NimBLERemoteCharacteristic *characteristic = pUniqueChar;
+                auto characteristic = pUniqueCharExt;// bleLock->uniqueCharacteristics[it->second];
                 std::string serializedMessage = responseMessage->serialize();
                 Log.verbose(F("Serialized message: %s"), serializedMessage.c_str());
 
@@ -178,7 +170,7 @@ void BleLock::initializeMutex() {
                 Log.verbose(F("Characteristic value set"));
 
                 //characteristic->notify();
-                Log.verbose(F("Characteristic notified"));
+                //Log.verbose(F("Characteristic notified"));
             } else {
                 Log.error(F("Destination address not found in uniqueCharacteristics"));
             }
@@ -187,11 +179,13 @@ void BleLock::initializeMutex() {
             Log.verbose(F("Response message deleted"));
 
             //bleLock->resumeAdvertising();
-            Log.verbose(F("Advertising resumed"));
+            //Log.verbose(F("Advertising resumed"));
 
             // Unlock the mutex for advertising and characteristic operations
             xSemaphoreGive(bleLock->bleMutex);
             Log.verbose(F("outgoingMessageTask: Mutex unlock"));
+            logColor(LColor::Green, F("Outgoing queue end Free heap memory :  %d bytes"), esp_get_free_heap_size());
+
         } else {
             Log.error(F("Failed to receive message from queue"));
         }
@@ -199,6 +193,68 @@ void BleLock::initializeMutex() {
 }
 
 [[noreturn]] void BleLock::jsonParsingTask(void *pvParameter) {
+    auto *bleLock = static_cast<BleLock *>(pvParameter);
+    std::tuple<std::string *, std::string *> *receivedMessageStrAndMac;
+
+    while (true) {
+        Log.verbose(F("parsingIncomingTask: Waiting to receive message from queue..."));
+
+        if (xQueueReceive(bleLock->jsonParsingQueue, &receivedMessageStrAndMac, portMAX_DELAY) == pdTRUE) {
+            logColor(LColor::Green, F("parsingIncomingTask begin Free heap memory :  %d bytes"), esp_get_free_heap_size());
+            auto receivedMessage = std::get<0>(*receivedMessageStrAndMac);
+            auto address = std::get<1>(*receivedMessageStrAndMac);
+            Log.verbose(F("parsingIncomingTask: Received message: %s from mac: %s"), receivedMessage->c_str(),
+                        address->c_str());
+
+            try {
+                auto msg = MessageBase::createInstance(*receivedMessage);
+                if (msg) {
+                    msg->sourceAddress = *address;
+                    Log.verbose(F("Received request from: %s "), msg->sourceAddress.c_str());
+
+                    MessageBase *responseMessage = msg->processRequest(bleLock);
+
+                    if (responseMessage) {
+                        Log.verbose(F("Sending response message to outgoing queue"));
+                        responseMessage->destinationAddress = msg->sourceAddress;
+                        responseMessage->sourceAddress = msg->destinationAddress;
+                        responseMessage->requestUUID = msg->requestUUID;
+                        if (xQueueSend(bleLock->outgoingQueue, &responseMessage, portMAX_DELAY) != pdPASS) {
+                            Log.error(F("Failed to send response message to outgoing queue"));
+                            delete responseMessage;
+                        }
+                    } else {
+                        auto responseMessageStr = new std::string(*receivedMessage);
+                        Log.verbose(F("Sending response message string to response queue"));
+                        if (xQueueSend(bleLock->responseQueue, &responseMessageStr, portMAX_DELAY) != pdPASS) {
+                            Log.error(F("Failed to send response message string to response queue"));
+                            delete responseMessageStr;
+                        }
+                    }
+                    delete msg; // Make sure to delete the msg after processing
+                } else {
+                    Log.error(F("Failed to create message instance"));
+                }
+            } catch (const json::parse_error &e) {
+                Log.error(F("JSON parse error: %s"), e.what());
+            } catch (const std::exception &e) {
+                Log.error(F("Exception occurred: %s"), e.what());
+            }
+            logColor(LColor::Green, F("parsingIncomingTask Free heap memory :  %d bytes"), esp_get_free_heap_size());
+
+            // Free the allocated memory for the received message
+            delete receivedMessage;
+            delete address;
+            delete receivedMessageStrAndMac;
+            logColor(LColor::Green, F("parsingIncomingTask end Free heap memory :  %d bytes"), esp_get_free_heap_size());
+        }
+    }
+}
+
+
+
+
+    #if 0
     auto *bleLock = static_cast<BleLock *>(pvParameter);
     std::string *receivedMessageStr;
 
@@ -248,4 +304,4 @@ void BleLock::initializeMutex() {
         }
     }
 }
-
+#endif
