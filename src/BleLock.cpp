@@ -166,7 +166,17 @@ void BleLock::initializeMutex() {
                 std::string serializedMessage = responseMessage->serialize();
                 Log.verbose(F("Serialized message: %s"), serializedMessage.c_str());
 
+                //extern volatile bool isDoWrite;
+                
+                //while (isDoWrite);
+                //isDoWrite = true;
+
+                Log.verbose(F("Characteristic value set (%d)...."),characteristic!=nullptr);
                 characteristic->writeValue(serializedMessage);
+                //extern std::string uniqueOldVal;
+                //uniqueOldVal = serializedMessage;
+                //isDoWrite = false;
+
                 Log.verbose(F("Characteristic value set"));
 
                 //characteristic->notify();
