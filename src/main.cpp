@@ -433,7 +433,37 @@ void setup() {
     //xTaskCreate(connectionLoopTask, "connectionLoopTask", 8192, nullptr, 1, nullptr);
     xTaskCreate(sendOpenTask, "sendOpenTask", 8192, nullptr, 1, nullptr);
 
+
+    bool registerResOk = []() {
+        MessageBase::registerConstructor(MessageType::resOk, []() -> MessageBase * { return new ResOk(); });
+        return true;
+    }();
+    bool registerReqRegKey = []() {
+        MessageBase::registerConstructor(MessageType::reqRegKey, []() -> MessageBase * { return new ReqRegKey(); });
+        return true;
+    }();
+
+    bool registerResKey = []() {
+        MessageBase::registerConstructor(MessageType::resKey, []() -> MessageBase * { return new ResKey(); });
+        return true;
+    }();
+
+    bool registerOpenReq = []() {
+        MessageBase::registerConstructor(MessageType::OpenRequest, []() -> MessageBase * { return new OpenRequest(); });
+        return true;
+    }();
+    bool registerOpenCmd = []() {
+        MessageBase::registerConstructor(MessageType::OpenCommand, []() -> MessageBase * { return new OpenCommand(); });
+        return true;
+    }();
+    bool registerSecurituCheck = []() {
+        MessageBase::registerConstructor(MessageType::SecurityCheckRequestest, []() -> MessageBase * { return new SecurityCheckRequestest(); });
+        return true;
+    }();
+
+
     pScan = NimBLEDevice::getScan();
+    
 
     commandManager.registerHandler("connectToServer", []() {
         connectToServer();
