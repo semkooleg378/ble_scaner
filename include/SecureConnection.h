@@ -246,11 +246,11 @@ public:
     static void printHex(const std::vector<uint8_t>& vec) {
         for (size_t i = 0; i < vec.size() && i < 16; ++i) { // limit output to first 16 bytes
             if (vec[i] < 0x10) {
-                Log.notice("%s", "0");
+                Serial.print("0");
             }
-            Log.notice("%s", vec[i], HEX);
+            Serial.print(vec[i], HEX);
         }
-        Log.notice("");
+        Serial.println();
     }
 
     std::string generateRandomField()

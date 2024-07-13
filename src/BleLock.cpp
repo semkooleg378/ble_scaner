@@ -177,11 +177,11 @@ void BleLock::initializeMutex() {
                 //uniqueOldVal = serializedMessage;
                 //isDoWrite = false;
 
-                extern void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify);
+                //extern void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify);
 
-                Log.verbose(F("Characteristic value set"));
-                bool subs2 = characteristic->subscribe(true, onNotify);
-                Log.verbose(F("Characteristic resubscribe -- %d"), subs2);
+                //Log.verbose(F("Characteristic value set"));
+                //bool subs2 = characteristic->subscribe(true, onNotify);
+                //Log.verbose(F("Characteristic resubscribe -- %d"), subs2);
 
 
                 //characteristic->notify();

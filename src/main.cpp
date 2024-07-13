@@ -398,16 +398,19 @@ void connectToServer() {
     }
 }
 
- bool isOkRes = false; 
+volatile bool isOkRes = false; 
 NimBLEScan *pScan = nullptr;
+volatile bool noMore = false;
 
 [[noreturn]] void scenrioTempTask(void *parameters) {
     while (true) {
-        if (isOkRes) {
+        if (isOkRes && !noMore) {
+            logColor (LColor::LightRed, F("Strtt connect"));
             OpenRequest *msg = new OpenRequest;
             msg->destinationAddress = servMac;
             msg->sourceAddress = key.getMacAddress();
             xQueueSend(outgoingQueue, &msg, portMAX_DELAY);
+            noMore = true;
         }
         vTaskDelay(5000 / portTICK_PERIOD_MS);
     }

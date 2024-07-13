@@ -3,7 +3,7 @@
 
 #define MessageMaxDelay 30000
 
-extern bool isOkRes;
+extern volatile bool isOkRes;
 
 class ResOk : public MessageBase {
 public:
@@ -65,7 +65,7 @@ protected:
         isOkRes = true;   
         std::vector<uint8_t> vKey;
         std::string keyReal = SecureConnection::hex2str(key);
-        for (int i = 0; i < keyReal.length(); i++)
+        for (int i = 0; i < keyReal.size(); i++)
         {
             vKey.push_back(keyReal[i]);
         }
@@ -85,6 +85,7 @@ public:
         requestUUID = generateUUID();
     }
 
+#if 0
     MessageBase *processRequest(void *context) override {
         auto lock = static_cast<BleLock *>(context);
         if (xSemaphoreTake(lock->bleMutex, portMAX_DELAY) == pdTRUE) {
@@ -98,6 +99,7 @@ public:
         res->key =  key;
         return res;
     }
+    #endif
 
 protected:
     void serializeExtraFields(json &doc) override {
@@ -113,7 +115,6 @@ protected:
 
 class OpenCommand : public MessageBase {
 public:
-    std::string key;
     std::string randomField;
 
     OpenCommand() {
@@ -125,6 +126,7 @@ public:
     {
         randomField = randomFieldVal;
     }
+    #if 0
     MessageBase *processRequest(void *context) override {
         auto lock = static_cast<BleLock *>(context);
         if (xSemaphoreTake(lock->bleMutex, portMAX_DELAY) == pdTRUE) {
@@ -132,11 +134,12 @@ public:
             xSemaphoreGive(lock->bleMutex);
         }
         auto res = new ResOk();
-        res->destinationAddress = key;
-        res->sourceAddress = key;
+        res->destinationAddress = sourceAddress;
+        res->sourceAddress = destinationAddress;
+        res->status = true;
         return res;
     }
-
+    #endif
     std::string getEncryptedCommand ()
     {
         return randomField;
@@ -144,19 +147,18 @@ public:
 
 protected:
     void serializeExtraFields(json &doc) override {
-        doc["key"] = key;
-        Log.notice("Serialized key: %s\n", key.c_str());
+        doc["randomField"] = SecureConnection::str2hex( randomField);
+        Log.notice("Serialized randomField: %s\n", SecureConnection::str2hex( randomField).c_str());
     }
 
     void deserializeExtraFields(const json &doc) override {
-        key = doc["key"];
-        Log.notice("Deserialized key: %s\n", key.c_str());
+        randomField = SecureConnection::hex2str( doc["randomField"]);
+        Log.notice("Deserialized randomField: %s\n", randomField.c_str());
     }
 };
 
 class SecurityCheckRequestest : public MessageBase {
 public:
-    std::string key;
     std::string randomField;
 
     SecurityCheckRequestest() {
@@ -178,9 +180,10 @@ public:
         std::string resultStr = lock->secureConnection.encryptMessageAES(randomField,"UUID");
         //result = (lock->temporaryField == resultStr);
         auto res = new OpenCommand();
-        res->destinationAddress = key;
-        res->sourceAddress = key;
+        res->destinationAddress = sourceAddress;
+        res->sourceAddress = destinationAddress;
         res->setRandomField (resultStr);
+        res->requestUUID = requestUUID;
         return res;
     }
 
@@ -191,13 +194,13 @@ public:
 
 protected:
     void serializeExtraFields(json &doc) override {
-        doc["key"] = key;
-        Log.notice("Serialized key: %s\n", key.c_str());
+        doc["randomField"] = randomField;
+        Log.notice("Serialized randomField: %s\n", randomField.c_str());
     }
 
     void deserializeExtraFields(const json &doc) override {
-        key = doc["key"];
-        Log.notice("Deserialized key: %s\n", key.c_str());
+        randomField = doc["randomField"];
+        Log.notice("Deserialized randomField: %s\n", randomField.c_str());
     }
 };
 
@@ -218,6 +221,7 @@ public:
         randomField = randomFieldVal;
     }
 
+#if 0
     MessageBase *processRequest(void *context) override {
         auto lock = static_cast<BleLock *>(context);
 
@@ -263,6 +267,7 @@ public:
 
         return nullptr;
     }
+    #endif
 
 protected:
     void serializeExtraFields(json &doc) override {
