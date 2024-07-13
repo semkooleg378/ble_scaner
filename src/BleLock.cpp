@@ -238,7 +238,7 @@ void BleLock::initializeMutex() {
                             Log.error(F("Failed to send response message to outgoing queue"));
                             delete responseMessage;
                         }
-                    } else {
+                    } else if (msg->type != MessageType::resOk && msg->type != MessageType::resKey) {
                         auto responseMessageStr = new std::string(*receivedMessage);
                         Log.verbose(F("Sending response message string to response queue"));
                         if (xQueueSend(bleLock->responseQueue, &responseMessageStr, portMAX_DELAY) != pdPASS) {
