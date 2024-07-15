@@ -51,25 +51,19 @@ public:
 protected:
     void serializeExtraFields(json &doc) override {
         doc["status"] = status;
-        doc["key"] = SecureConnection::str2hex(key);
+        doc["key"] = key;
         Serial.printf("Serialized status: %d  key:%s\n", status, key.c_str());
     }
 
     void deserializeExtraFields(const json &doc) override {
         status = doc["status"];
-        key = SecureConnection::hex2str(doc["key"]);
+        key = doc["key"];
         Serial.printf("Deserialized status: %d  key:%s\n", status, key.c_str());
     }
     MessageBase *processRequest(void *context) override {
         auto lock = static_cast<BleLock *>(context);
-        isOkRes = true;   
-        std::vector<uint8_t> vKey;
-        std::string keyReal = SecureConnection::hex2str(key);
-        for (int i = 0; i < keyReal.size(); i++)
-        {
-            vKey.push_back(keyReal[i]);
-        }
-        lock->secureConnection.aesKeys["UUID"] = vKey;         
+        isOkRes = true;
+        lock->secureConnection.SetAESKey(sourceAddress,key);         
         return nullptr;
     }
 };
@@ -103,12 +97,12 @@ public:
 
 protected:
     void serializeExtraFields(json &doc) override {
-        doc["key"] = SecureConnection::str2hex(key);
+        doc["key"] = key;
         Serial.printf("Serialized key: %s\n", key.c_str());
     }
 
     void deserializeExtraFields(const json &doc) override {
-        key = SecureConnection::hex2str(doc["key"]);
+        key = doc["key"];
         Serial.printf("Deserialized key: %s\n", key.c_str());
     }
 };
@@ -147,12 +141,12 @@ public:
 
 protected:
     void serializeExtraFields(json &doc) override {
-        doc["randomField"] = SecureConnection::str2hex( randomField);
-        Log.notice("Serialized randomField: %s\n", SecureConnection::str2hex( randomField).c_str());
+        doc["randomField"] = randomField;
+        Log.notice("Serialized randomField: %s\n", randomField.c_str());
     }
 
     void deserializeExtraFields(const json &doc) override {
-        randomField = SecureConnection::hex2str( doc["randomField"]);
+        randomField = doc["randomField"];
         Log.notice("Deserialized randomField: %s\n", randomField.c_str());
     }
 };
@@ -177,7 +171,7 @@ public:
         //    xSemaphoreGive(lock->bleMutex);
         //}
         bool result =- false;
-        std::string resultStr = lock->secureConnection.encryptMessageAES(randomField,"UUID");
+        std::string resultStr = lock->secureConnection.encryptMessageAES(randomField,sourceAddress);
         //result = (lock->temporaryField == resultStr);
         auto res = new OpenCommand();
         res->destinationAddress = sourceAddress;

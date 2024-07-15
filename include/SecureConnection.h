@@ -1,5 +1,5 @@
-#ifndef SECURITY_CONNECTION_H
-#define SECURITY_CONNECTION_H
+#ifndef SecureConnection_H
+#define SecureConnection_H
 
 #include <Arduino.h>
 #include <mbedtls/entropy.h>
@@ -22,7 +22,18 @@ public:
         mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *) pers, strlen(pers));
     }
 
-    static std::string str2hex (std::string input)
+    std::string generateRandomField()
+    {
+        std::string result;
+        int size = 8 + random(24);
+        for (int i =0; i < size; i++)
+        {
+            result += (char)(random(90)+32);
+        }
+        return result;
+    }
+
+    static std::string vector2hex (std::vector<uint8_t> input)
     {
         const char* hexDigits = "0123456789abcdef";
         std::string output;
@@ -34,9 +45,9 @@ public:
         }
         return output;    
     }
-    static std::string hex2str (std::string input)
+    static std::vector<uint8_t> hex2vector (std::string input)
     {
-        std::string output;
+        std::vector<uint8_t> output;
         output.reserve(input.size() / 2); // Reserve space for the output string
 
         for (size_t i = 0; i < input.size(); i += 2) {
@@ -50,6 +61,15 @@ public:
             output.push_back((highNibble << 4) | lowNibble); // Combine the two nibbles
         }
         return output;        
+    }
+
+    std::string GetAESKey (std::string uuid)
+    {
+        return vector2hex(aesKeys.find (uuid)->second);
+    }
+    void SetAESKey (std::string uuid, std::string keyStr)
+    {
+        aesKeys[uuid] = hex2vector(keyStr);
     }
 
     void generateRSAKeys(const std::string& uuid) {
@@ -71,19 +91,19 @@ public:
         mbedtls_pk_free(&pk);
 
         // Debug: print partial keys
-        Log.notice("%s", "Public Key (partial): ");
-        Log.notice("%.*s", 100, publicKey); // print first 100 characters
-        Log.notice("");
-        Log.notice("%s", "Private Key (partial): ");
-        Log.notice("%.*s", 100, privateKey); // print first 100 characters
-        Log.notice("");
+        Serial.print("Public Key (partial): ");
+        Serial.write((char*)publicKey, 100); // print first 100 characters
+        Serial.println();
+        Serial.print("Private Key (partial): ");
+        Serial.write((char*)privateKey, 100); // print first 100 characters
+        Serial.println();
     }
 
     void generateAESKey(const std::string& uuid) {
         uint8_t key[16];
         mbedtls_ctr_drbg_random(&ctr_drbg, key, sizeof(key));
         aesKeys[uuid] = std::vector<uint8_t>(key, key + sizeof(key));
-        Log.notice("%s", "Generated AES Key: ");
+        Serial.print("Generated AES Key: ");
         printHex(aesKeys[uuid]);
     }
 
@@ -104,22 +124,32 @@ public:
 
         AES_CBC_encrypt_buffer(&ctx, buffer.data(), buffer.size());
 
-        std::string encryptedMessage(reinterpret_cast<char*>(iv), sizeof(iv));
-        encryptedMessage.append(reinterpret_cast<char*>(buffer.data()), buffer.size());
+        //std::string encryptedMessage(reinterpret_cast<char*>(iv), sizeof(iv));
+        //encryptedMessage.append(reinterpret_cast<char*>(buffer.data()), buffer.size());
+        std::vector<uint8_t> tempBuffer;
+        //tempBuffer.emplace  (tempBuffer.end(), reinterpret_cast<uint8_t*>(iv), sizeof(iv)); 
+        //tempBuffer.emplace  (tempBuffer.end(), reinterpret_cast<uint8_t*>(buffer.data()), buffer.size()); 
+        for (int i = 0; i <  sizeof(iv);i++)
+            tempBuffer.push_back (iv[i]);
+        for (int i = 0; i <  buffer.size();i++)
+            tempBuffer.push_back (buffer.data()[i]);
+        
+        std::string encryptedMessage = vector2hex (tempBuffer);
 
-        Log.notice("%s", "IV for AES: ");
+        Serial.print("IV for AES: ");
         printHex(std::vector<uint8_t>(iv, iv + sizeof(iv)));
-        Log.notice("%s", "Encrypted Message (partial): ");
+        Serial.print("Encrypted Message (partial): ");
         printHex(std::vector<uint8_t>(buffer.begin(), buffer.begin() + 16)); // print first 16 bytes
 
         return encryptedMessage;
     }
 
-    std::string decryptMessageAES(const std::string& encryptedMessage, const std::string& uuid) {
+    std::string decryptMessageAES(const std::string& encryptedMessageStr, const std::string& uuid) {
         if (aesKeys.find(uuid) == aesKeys.end()) {
             return "Key not found";
         }
 
+        std::vector<uint8_t> encryptedMessage = hex2vector(encryptedMessageStr);
         uint8_t iv[16];
         memcpy(iv, encryptedMessage.data(), 16);
 
@@ -136,7 +166,7 @@ public:
         }
         buffer.resize(buffer.size() - padding_len);
 
-        Log.notice("%s", "Decrypted Message (partial): ");
+        Serial.print("Decrypted Message (partial): ");
         printHex(std::vector<uint8_t>(buffer.begin(), buffer.begin() + 16)); // print first 16 bytes
 
         return {std::string(buffer.begin(), buffer.end())};
@@ -170,7 +200,7 @@ public:
 
         mbedtls_pk_free(&pk);
 
-        Log.notice("%s", "Encrypted RSA Message (partial): ");
+        Serial.print("Encrypted RSA Message (partial): ");
         printHex(std::vector<uint8_t>(output.begin(), output.begin() + 16)); // print first 16 bytes
 
         return {std::string(reinterpret_cast<char *>(output.data()), output_len)};
@@ -209,7 +239,7 @@ public:
             return stringToVector("Decryption failed: incorrect AES key length");
         }
 
-        Log.notice("%s", "Decrypted RSA Message (partial): ");
+        Serial.print("Decrypted RSA Message (partial): ");
         printHex(std::vector<uint8_t>(output.begin(), output.begin() + 16)); // print first 16 bytes
 
         return {std::vector<uint8_t>(output.begin(), output.begin() + output_len)};
@@ -253,17 +283,6 @@ public:
         Serial.println();
     }
 
-    std::string generateRandomField()
-    {
-        std::string result;
-        int size = 8 + random(24);
-        for (int i =0; i < size; i++)
-        {
-            result += (char)(random(90)+32);
-        }
-        return result;
-    }
-
     std::unordered_map<std::string, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> keys;
     std::unordered_map<std::string, std::vector<uint8_t>> aesKeys;
 
@@ -272,6 +291,4 @@ private:
     mbedtls_ctr_drbg_context ctr_drbg;
 };
 
-
 #endif
-
