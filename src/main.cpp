@@ -277,10 +277,50 @@ class ClientCallbacks : public NimBLEClientCallbacks {
 };
 
 
+//////////////
+const std::string BEGIN_SEND = "begin_transaction"; 
+const std::string END_SEND = "end_transaction";
+std::string baptsBuffer;\
+bool partParsing = false;
+const std::string ComNeedNext = "NEXT";
+
 void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
     Log.notice("onNotify NimBLERemoteCharacteristic");
     std::string data((char *)pData, length);
     logColor(LColor::Yellow, F("Notification: %s"), data.c_str());
+
+    if (data == ComNeedNext)
+    {
+        BleLock::setWaiter(servMac, true);
+        logColor(LColor::Yellow, F("Notification: Need Next Part"));
+        return;
+    }
+
+
+    if (data == BEGIN_SEND)
+    {
+        baptsBuffer.clear();
+        partParsing = true;
+        logColor(LColor::Yellow, F("Notification: PARTS begin"));
+        pBLERemoteCharacteristic->writeValue (ComNeedNext);
+        return;
+    }
+    if (partParsing)
+    {
+        if (data == END_SEND)
+        {
+            data = baptsBuffer;
+            baptsBuffer.clear();
+            partParsing = false;
+            logColor(LColor::Yellow, F("Notification: PARTS STOP"));
+        }
+        else
+        {
+            baptsBuffer += data;
+            pBLERemoteCharacteristic->writeValue (ComNeedNext);
+            return;
+        }
+    }
 
     std::string *addr = new std::string(servMac);
     std::tuple<std::string *, std::string *> *messageAndMac = new std::tuple<std::string *, std::string *>(new std::string(data), addr);
@@ -401,16 +441,81 @@ void connectToServer() {
 volatile bool isOkRes = false; 
 NimBLEScan *pScan = nullptr;
 volatile bool noMore = false;
+std::unordered_map<std::string, KeyStatusType> Locks;
+
+std::unordered_map<std::string, KeyStatusType> LocksLastCall;
 
 [[noreturn]] void scenrioTempTask(void *parameters) {
     while (true) {
-        if (isOkRes && !noMore) {
+/*        if (isOkRes && !noMore) {
             logColor (LColor::LightRed, F("Strtt connect"));
             OpenRequest *msg = new OpenRequest;
             msg->destinationAddress = servMac;
             msg->sourceAddress = key.getMacAddress();
             xQueueSend(outgoingQueue, &msg, portMAX_DELAY);
             noMore = true;
+        }
+
+                                ReqRegKey *req =  new ReqRegKey;
+                        req->destinationAddress= servMac;
+                        req->sourceAddress = getMacSelf();
+                        xQueueSend (outgoingQueue, &req, portMAX_DELAY);
+
+        */
+        for (auto it = Locks.begin (); it != Locks.end(); it++)
+        {
+            switch (it->second)
+            {
+                case KeyStatusType::statusNone:
+                {
+                    auto req = new HelloRequest;
+                    req->sourceAddress = getMacAddress();
+                    req->destinationAddress = it->first;
+                    req->status = false;
+                    req->key = "";
+                    it->second = KeyStatusType::statusWaitForAnswer;
+                    LocksLastCall[it->first] = KeyStatusType::statusNone; 
+                    xQueueSend (outgoingQueue, &req, portMAX_DELAY);
+                    break;
+                }
+                case KeyStatusType::statusPublickKeyExist:
+                {
+                    auto req = new HelloRequest;
+                    req->sourceAddress = getMacAddress();
+                    req->destinationAddress = it->first;
+                    req->status = true;
+                    req->key = key.secureConnection.generatePublicKeyHash (key.secureConnection.keys[it->first].first,16);
+                    it->second = KeyStatusType::statusWaitForAnswer;
+                    LocksLastCall[it->first] = KeyStatusType::statusPublickKeyExist; 
+                    xQueueSend (outgoingQueue, &req, portMAX_DELAY);
+                    break;
+                }
+                case KeyStatusType::statusSessionKeyCreated:
+                {
+                    ReqRegKey *req =  new ReqRegKey;
+                    req->sourceAddress = getMacAddress();
+                    req->destinationAddress = it->first;
+                    key.secureConnection.generateAESKey (it->first);
+                    req->key = key.secureConnection.encryptMessageRSA(key.secureConnection.aesKeys[it->first],it->first);
+                    it->second = KeyStatusType::statusWaitForAnswer;
+                    LocksLastCall[it->first] = KeyStatusType::statusSessionKeyCreated; 
+                    xQueueSend (outgoingQueue, &req, portMAX_DELAY);
+                    break;
+                }
+                case KeyStatusType::statusOpenCommand:
+                {
+                    OpenRequest *req = new OpenRequest;
+                    req->sourceAddress = getMacAddress();
+                    req->destinationAddress = it->first;
+                    it->second = KeyStatusType::statusWaitForAnswer;
+                    LocksLastCall[it->first] = KeyStatusType::statusOpenCommand; 
+                    xQueueSend (outgoingQueue, &req, portMAX_DELAY);
+                    break;
+                }
+
+                default:
+                    break;
+            }
         }
         vTaskDelay(5000 / portTICK_PERIOD_MS);
     }
@@ -463,6 +568,14 @@ void setup() {
         MessageBase::registerConstructor(MessageType::SecurityCheckRequestest, []() -> MessageBase * { return new SecurityCheckRequestest(); });
         return true;
     }();
+    bool registerHelloRequest = []() {
+        MessageBase::registerConstructor(MessageType::HelloRequest, []() -> MessageBase * { return new HelloRequest(); });
+        return true;
+    }();
+    bool registerReceivePublic = []() {
+        MessageBase::registerConstructor(MessageType::ReceivePublic, []() -> MessageBase * { return new ReceivePublic(); });
+        return true;
+    }();
 
 
     pScan = NimBLEDevice::getScan();
@@ -484,10 +597,10 @@ void setup() {
         logColor(LColor::Green, F("Handled onConnect event"));
         if (pUniqueCharExt!=nullptr)
         {
-                        ReqRegKey *req =  new ReqRegKey;
-                        req->destinationAddress= servMac;
-                        req->sourceAddress = getMacSelf();
-                        xQueueSend (outgoingQueue, &req, portMAX_DELAY);
+            Locks[servMac] = KeyStatusType::statusNone;
+            auto trio = key.secureConnection.keys.find(servMac);
+            if (trio != key.secureConnection.keys.end())
+                Locks[servMac] = KeyStatusType::statusPublickKeyExist;
         }
     });
 

@@ -5,6 +5,22 @@
 
 extern volatile bool isOkRes;
 
+enum KeyStatusType
+{
+    statusWaitForAnswer,
+    statusNone,
+    statusPublickKeyExist,
+    statusSessionKeyCreated,
+    statusOpenCommand,
+    statusEnd
+};
+
+extern std::unordered_map<std::string, KeyStatusType> Locks;
+
+extern std::unordered_map<std::string, KeyStatusType> LocksLastCall;
+
+
+
 class ResOk : public MessageBase {
 public:
     bool status{};
@@ -29,6 +45,27 @@ protected:
         Serial.printf("Deserialized status: %d\n", status);
     }
     MessageBase *processRequest(void *context) override {
+        auto lock = static_cast<BleLock *>(context);
+        if (status)
+        {
+            if (LocksLastCall[sourceAddress] == KeyStatusType::statusNone)
+                Locks[sourceAddress] = KeyStatusType::statusSessionKeyCreated;
+            else
+            if (LocksLastCall[sourceAddress] == KeyStatusType::statusPublickKeyExist)
+                Locks[sourceAddress] = KeyStatusType::statusSessionKeyCreated;
+            else
+                Locks[sourceAddress] = KeyStatusType::statusEnd;
+        }
+        else
+        {
+            if (LocksLastCall[sourceAddress] == KeyStatusType::statusNone)
+                Locks[sourceAddress] = KeyStatusType::statusEnd;
+            else
+            if (LocksLastCall[sourceAddress] == KeyStatusType::statusPublickKeyExist)
+                Locks[sourceAddress] = KeyStatusType::statusNone;
+            else
+                Locks[sourceAddress] = KeyStatusType::statusEnd;
+        }
         return nullptr;
     }
 };
@@ -62,8 +99,12 @@ protected:
     }
     MessageBase *processRequest(void *context) override {
         auto lock = static_cast<BleLock *>(context);
-        isOkRes = true;
-        lock->secureConnection.SetAESKey(sourceAddress,key);         
+        //isOkRes = true;
+        //lock->secureConnection.SetAESKey(sourceAddress,key); 
+        if (status)
+            Locks[sourceAddress] = KeyStatusType::statusOpenCommand;
+        else
+            Locks[sourceAddress] = KeyStatusType::statusEnd;// fail
         return nullptr;
     }
 };
@@ -276,3 +317,112 @@ protected:
         Log.notice("Deserialized OpenRequest: %s\n", randomField.c_str());
     }
 };
+
+////////////////////////
+///////////////////////
+////////////////////////
+//#define SERVER_PART
+
+class ReceivePublic : public MessageBase {
+public:
+    std::string key;
+
+    ReceivePublic() {
+        type = MessageType::ReceivePublic;
+    }
+
+    explicit ReceivePublic(std::string newKey) :  key(newKey) {
+        type = MessageType::ReceivePublic;
+    }
+protected:
+
+    void serializeExtraFields(json &doc) override {
+        doc["key"] = key;
+        Serial.printf("Serialized key:%s\n", key.c_str());
+    }
+
+    void deserializeExtraFields(const json &doc) override {
+        key = doc["key"];
+        Serial.printf("Deserialized key:%s\n", key.c_str());
+    }
+    MessageBase *processRequest(void *context) override {
+        auto lock = static_cast<BleLock *>(context);
+
+        auto pubKey = SecureConnection::hex2vector(key);
+        std::pair pair (pubKey,pubKey);
+        lock->secureConnection.keys[sourceAddress] = pair;
+        lock->secureConnection.SaveRSAKeys();
+        Locks[sourceAddress] = KeyStatusType::statusPublickKeyExist;
+        return nullptr;
+    }
+
+};
+// cliewnt handshake request
+class HelloRequest : public MessageBase {
+public:
+    bool status{};
+    std::string key;
+
+    HelloRequest() {
+        type = MessageType::HelloRequest;
+    }
+
+    explicit HelloRequest(bool status, std::string newKey) : status(status), key(newKey) {
+        type = MessageType::HelloRequest;
+    }
+protected:
+    void serializeExtraFields(json &doc) override {
+        doc["status"] = status;
+        doc["key"] = key;
+        Serial.printf("Serialized status: %d  key:%s\n", status, key.c_str());
+    }
+
+    void deserializeExtraFields(const json &doc) override {
+        status = doc["status"];
+        key = doc["key"];
+        Serial.printf("Deserialized status: %d  key:%s\n", status, key.c_str());
+    }
+    MessageBase *processRequest(void *context) override {
+        auto lock = static_cast<BleLock *>(context);
+        if (status) //handshake suceeded  check key and send Ok
+        {
+            bool bChkResult = false;
+            auto keyPair = lock->secureConnection.keys.find(sourceAddress);
+            if (keyPair!=lock->secureConnection.keys.end())
+            {
+                //keyPair->second.first;
+                //keyPair->second.second;
+                auto rawMessage = SecureConnection::hex2vector (key);
+                std::string encMessage  = std::string ((char*)rawMessage.data(),rawMessage.size()); 
+                std::vector<uint8_t> encryptAESKey = lock->secureConnection.decryptMessageRSA (encMessage,sourceAddress);
+                lock->secureConnection.SetAESKey(sourceAddress, SecureConnection::vector2hex(encryptAESKey));
+            }
+            auto res = new ResOk();
+            res->destinationAddress = sourceAddress;
+            res->sourceAddress = destinationAddress;
+            res->status = bChkResult;
+            return res;
+        }
+        else // sdend publick key
+        {
+            if (lock->secureConnection.keys.empty())
+            {
+                lock->secureConnection.generateRSAKeys (sourceAddress);
+            }
+            else
+            {
+                lock->secureConnection.generateRSAPublicKeys (sourceAddress);
+            }
+            lock->secureConnection.SaveRSAKeys();
+
+            auto res = new ReceivePublic;
+
+            res->destinationAddress = sourceAddress;
+            res->sourceAddress = destinationAddress;            
+            res->key = SecureConnection::vector2hex(lock->secureConnection.keys[sourceAddress].first);
+            return res;
+        }
+        return nullptr;
+    }
+};
+

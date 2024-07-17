@@ -36,7 +36,9 @@ enum class MessageType {
     OpenRequest, 
     SecurityCheckRequestest,
     OpenCommand,
-    resKey
+    resKey, 
+    HelloRequest,
+    ReceivePublic
 };
 
 NLOHMANN_JSON_SERIALIZE_ENUM( MessageType, {
@@ -45,7 +47,9 @@ NLOHMANN_JSON_SERIALIZE_ENUM( MessageType, {
     {MessageType::OpenRequest, "OpenRequest"},
     {MessageType::SecurityCheckRequestest, "SecurityCheckRequestest"},
     {MessageType::OpenCommand, "OpenCommand"},
-    {MessageType::resKey, "resKey"}
+    {MessageType::resKey, "resKey"},
+    {MessageType::HelloRequest, "HelloRequest"},
+    {MessageType::ReceivePublic, "ReceivePublic"}
 })
 
 

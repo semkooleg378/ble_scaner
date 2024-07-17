@@ -2,6 +2,8 @@
 #include "ReqRes.h"
 #include "CommandManager.h"
 
+std::unordered_map<std::string, bool> BleLock::messageControll; // map for multypart messages
+
 // Callbacks Implementation
 void printCharacteristics(NimBLEService *pService) {
     Log.notice("%s\n", "Listing characteristics:");
@@ -108,6 +110,7 @@ void BleLock::setup() {
     Log.verbose(F("outgoingMessageTask created"));
 
 //    loadCharacteristicsFromMemory();
+    secureConnection.LoadRSAKeys();
 }
 
 
@@ -172,20 +175,40 @@ void BleLock::initializeMutex() {
                 //isDoWrite = true;
 
                 Log.verbose(F("Characteristic value set (%d)...."),characteristic!=nullptr);
-                characteristic->writeValue(serializedMessage);
-                //extern std::string uniqueOldVal;
-                //uniqueOldVal = serializedMessage;
-                //isDoWrite = false;
+                const int BLE_ATT_ATTR_MAX_LEN_IN = 160;////BLE_ATT_ATTR_MAX_LEN
+                if (serializedMessage.length() < BLE_ATT_ATTR_MAX_LEN_IN)
+                {
+                    characteristic->writeValue(serializedMessage);
+                }
+                else
+                {
+                    const std::string BEGIN_SEND = "begin_transaction"; 
+                    const std::string END_SEND = "end_transaction";
+                    const TickType_t deleyPart = 100/portTICK_PERIOD_MS;
+                    int partsNum = serializedMessage.length()/BLE_ATT_ATTR_MAX_LEN_IN + ((serializedMessage.length()%BLE_ATT_ATTR_MAX_LEN_IN)?1:0);
+                    setWaiter(responseMessage->destinationAddress,false);
+                    characteristic->writeValue(BEGIN_SEND);
 
-                //extern void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify);
+                    logColor(LColor::Yellow, F("BEGIN_SEND"));
+                    //vTaskDelay(deleyPart);
+                    for (int i=0; i < partsNum; i++)
+                    {
+                        std::string subS;
+                        waitForMessage (responseMessage->destinationAddress);
+                        if (((i+1)*BLE_ATT_ATTR_MAX_LEN_IN)<serializedMessage.length()) 
+                            subS=(serializedMessage.substr(i*BLE_ATT_ATTR_MAX_LEN_IN,BLE_ATT_ATTR_MAX_LEN_IN));
+                        else
+                            subS=(serializedMessage.substr(i*BLE_ATT_ATTR_MAX_LEN_IN));
+                        setWaiter(responseMessage->destinationAddress, false);
+                        characteristic->writeValue(subS);
+                        logColor(LColor::Yellow, F("PART_SEND <%s>"),subS.c_str());
 
-                //Log.verbose(F("Characteristic value set"));
-                //bool subs2 = characteristic->subscribe(true, onNotify);
-                //Log.verbose(F("Characteristic resubscribe -- %d"), subs2);
-
-
-                //characteristic->notify();
-                //Log.verbose(F("Characteristic notified"));
+                        //vTaskDelay(deleyPart);
+                    }
+                    waitForMessage (responseMessage->destinationAddress);
+                    characteristic->writeValue(END_SEND);
+                    logColor(LColor::Yellow, F("END_SEND"));
+                }
             } else {
                 Log.error(F("Destination address not found in uniqueCharacteristics"));
             }
@@ -238,7 +261,7 @@ void BleLock::initializeMutex() {
                             Log.error(F("Failed to send response message to outgoing queue"));
                             delete responseMessage;
                         }
-                    } else if (msg->type != MessageType::resOk && msg->type != MessageType::resKey) {
+                    } else if (msg->type != MessageType::resOk && msg->type != MessageType::resKey && msg->type != MessageType::ReceivePublic) {
                         auto responseMessageStr = new std::string(*receivedMessage);
                         Log.verbose(F("Sending response message string to response queue"));
                         if (xQueueSend(bleLock->responseQueue, &responseMessageStr, portMAX_DELAY) != pdPASS) {
