@@ -2,7 +2,7 @@
 #include "ReqRes.h"
 #include "CommandManager.h"
 
-std::unordered_map<std::string, bool> BleLock::messageControll; // map for multypart messages
+std::unordered_map<std::string, std::string> BleLock::messageControll; // map for multypart messages
 
 // Callbacks Implementation
 void printCharacteristics(NimBLEService *pService) {
@@ -182,32 +182,25 @@ void BleLock::initializeMutex() {
                 }
                 else
                 {
-                    const std::string BEGIN_SEND = "begin_transaction"; 
-                    const std::string END_SEND = "end_transaction";
-                    const TickType_t deleyPart = 100/portTICK_PERIOD_MS;
+                    const TickType_t deleyPart = 10/portTICK_PERIOD_MS;
                     int partsNum = serializedMessage.length()/BLE_ATT_ATTR_MAX_LEN_IN + ((serializedMessage.length()%BLE_ATT_ATTR_MAX_LEN_IN)?1:0);
-                    setWaiter(responseMessage->destinationAddress,false);
-                    characteristic->writeValue(BEGIN_SEND);
 
                     logColor(LColor::Yellow, F("BEGIN_SEND"));
                     //vTaskDelay(deleyPart);
                     for (int i=0; i < partsNum; i++)
                     {
                         std::string subS;
-                        waitForMessage (responseMessage->destinationAddress);
                         if (((i+1)*BLE_ATT_ATTR_MAX_LEN_IN)<serializedMessage.length()) 
                             subS=(serializedMessage.substr(i*BLE_ATT_ATTR_MAX_LEN_IN,BLE_ATT_ATTR_MAX_LEN_IN));
                         else
                             subS=(serializedMessage.substr(i*BLE_ATT_ATTR_MAX_LEN_IN));
-                        setWaiter(responseMessage->destinationAddress, false);
                         characteristic->writeValue(subS);
                         logColor(LColor::Yellow, F("PART_SEND <%s>"),subS.c_str());
 
-                        //vTaskDelay(deleyPart);
+                       if ((i+1)!=partsNum)
+                        vTaskDelay(deleyPart);
                     }
-                    waitForMessage (responseMessage->destinationAddress);
-                    characteristic->writeValue(END_SEND);
-                    logColor(LColor::Yellow, F("END_SEND"));
+                    //logColor(LColor::Yellow, F("END_SEND"));
                 }
             } else {
                 Log.error(F("Destination address not found in uniqueCharacteristics"));
@@ -244,6 +237,8 @@ void BleLock::initializeMutex() {
             Log.verbose(F("parsingIncomingTask: Received message: %s from mac: %s"), receivedMessage->c_str(),
                         address->c_str());
 
+            bool isPartOfMessage = false;
+
             try {
                 auto msg = MessageBase::createInstance(*receivedMessage);
                 if (msg) {
@@ -251,7 +246,7 @@ void BleLock::initializeMutex() {
                     Log.verbose(F("Received request from: %s "), msg->sourceAddress.c_str());
 
                     MessageBase *responseMessage = msg->processRequest(bleLock);
-
+                    messageControll[*address].clear();
                     if (responseMessage) {
                         Log.verbose(F("Sending response message to outgoing queue"));
                         responseMessage->destinationAddress = msg->sourceAddress;
@@ -271,13 +266,57 @@ void BleLock::initializeMutex() {
                     }
                     delete msg; // Make sure to delete the msg after processing
                 } else {
+                    isPartOfMessage=true;
                     Log.error(F("Failed to create message instance"));
                 }
             } catch (const json::parse_error &e) {
+                isPartOfMessage=true;
                 Log.error(F("JSON parse error: %s"), e.what());
             } catch (const std::exception &e) {
+                isPartOfMessage=true;
                 Log.error(F("Exception occurred: %s"), e.what());
             }
+
+            if (isPartOfMessage)
+            {
+                messageControll[*address]+=*receivedMessage;
+
+                try {
+                    auto msg = MessageBase::createInstance(messageControll[*address]);
+                    if (msg) {
+                        msg->sourceAddress = *address;
+                        Log.verbose(F("Received request from: %s "), msg->sourceAddress.c_str());
+
+                        MessageBase *responseMessage = msg->processRequest(bleLock);
+                        messageControll[*address].clear();
+                        if (responseMessage) {
+                            Log.verbose(F("Sending response message to outgoing queue"));
+                            responseMessage->destinationAddress = msg->sourceAddress;
+                            responseMessage->sourceAddress = msg->destinationAddress;
+                            responseMessage->requestUUID = msg->requestUUID;
+                            if (xQueueSend(bleLock->outgoingQueue, &responseMessage, portMAX_DELAY) != pdPASS) {
+                                Log.error(F("Failed to send response message to outgoing queue"));
+                                delete responseMessage;
+                            }
+                        } else if (msg->type != MessageType::resOk && msg->type != MessageType::resKey && msg->type != MessageType::ReceivePublic) {
+                            auto responseMessageStr = new std::string(*receivedMessage);
+                            Log.verbose(F("Sending response message string to response queue"));
+                            if (xQueueSend(bleLock->responseQueue, &responseMessageStr, portMAX_DELAY) != pdPASS) {
+                                Log.error(F("Failed to send response message string to response queue"));
+                                delete responseMessageStr;
+                            }
+                        }
+                        delete msg; // Make sure to delete the msg after processing
+                    } else {
+                        Log.error(F("Failed to create message instance"));
+                    }
+                } catch (const json::parse_error &e) {
+                    Log.error(F("JSON parse error: %s"), e.what());
+                } catch (const std::exception &e) {
+                    Log.error(F("Exception occurred: %s"), e.what());
+                }
+            }
+
             logColor(LColor::Green, F("parsingIncomingTask Free heap memory :  %d bytes"), esp_get_free_heap_size());
 
             // Free the allocated memory for the received message

@@ -289,39 +289,6 @@ void onNotify(NimBLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pDa
     std::string data((char *)pData, length);
     logColor(LColor::Yellow, F("Notification: %s"), data.c_str());
 
-    if (data == ComNeedNext)
-    {
-        BleLock::setWaiter(servMac, true);
-        logColor(LColor::Yellow, F("Notification: Need Next Part"));
-        return;
-    }
-
-
-    if (data == BEGIN_SEND)
-    {
-        baptsBuffer.clear();
-        partParsing = true;
-        logColor(LColor::Yellow, F("Notification: PARTS begin"));
-        pBLERemoteCharacteristic->writeValue (ComNeedNext);
-        return;
-    }
-    if (partParsing)
-    {
-        if (data == END_SEND)
-        {
-            data = baptsBuffer;
-            baptsBuffer.clear();
-            partParsing = false;
-            logColor(LColor::Yellow, F("Notification: PARTS STOP"));
-        }
-        else
-        {
-            baptsBuffer += data;
-            pBLERemoteCharacteristic->writeValue (ComNeedNext);
-            return;
-        }
-    }
-
     std::string *addr = new std::string(servMac);
     std::tuple<std::string *, std::string *> *messageAndMac = new std::tuple<std::string *, std::string *>(new std::string(data), addr);
 

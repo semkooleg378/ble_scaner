@@ -63,21 +63,7 @@ public:
     std::string temporaryField;
     void initializeMutex();
 
-    static std::unordered_map<std::string, bool> messageControll; // map for multypart messages
-    static void setWaiter (std::string who, bool val)
-    {
-        messageControll[who] = val;
-    }
-    static bool getWaiter(std::string who)
-    {
-        return messageControll[who];
-    }
-
-    static void waitForMessage (std::string who)
-    {
-        while (!getWaiter(who))
-            vTaskDelay(10/portTICK_PERIOD_MS);
-    }
+    static std::unordered_map<std::string, std::string> messageControll; // map for multypart messages
 
 private:
     [[noreturn]] static void outgoingMessageTask(void *pvParameter);
