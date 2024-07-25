@@ -1,11 +1,11 @@
 #include "MessageBase.h"
-#include "BleLock.h"
+#include "BleLockClient.h"
 
 #define MessageMaxDelay 30000
 
 extern volatile bool isOkRes;
 
-enum KeyStatusType
+/*enum KeyStatusType
 {
     statusWaitForAnswer,
     statusNone,
@@ -14,8 +14,8 @@ enum KeyStatusType
     statusOpenCommand,
     statusEnd
 };
-
-extern std::unordered_map<std::string, KeyStatusType> Locks;
+*/
+//extern std::unordered_map<std::string, KeyStatusType> Locks;
 
 extern std::unordered_map<std::string, KeyStatusType> LocksLastCall;
 
@@ -45,26 +45,26 @@ protected:
         Serial.printf("Deserialized status: %d\n", status);
     }
     MessageBase *processRequest(void *context) override {
-        auto lock = static_cast<BleLock *>(context);
+        auto lock = static_cast<BleLockClient *>(context);
         if (status)
         {
             if (LocksLastCall[sourceAddress] == KeyStatusType::statusNone)
-                Locks[sourceAddress] = KeyStatusType::statusSessionKeyCreated;
+                BleLockClient::Locks[sourceAddress] = KeyStatusType::statusSessionKeyCreated;
             else
             if (LocksLastCall[sourceAddress] == KeyStatusType::statusPublickKeyExist)
-                Locks[sourceAddress] = KeyStatusType::statusSessionKeyCreated;
+                BleLockClient::Locks[sourceAddress] = KeyStatusType::statusSessionKeyCreated;
             else
-                Locks[sourceAddress] = KeyStatusType::statusEnd;
+                BleLockClient::Locks[sourceAddress] = KeyStatusType::statusEnd;
         }
         else
         {
             if (LocksLastCall[sourceAddress] == KeyStatusType::statusNone)
-                Locks[sourceAddress] = KeyStatusType::statusEnd;
+                BleLockClient::Locks[sourceAddress] = KeyStatusType::statusEnd;
             else
             if (LocksLastCall[sourceAddress] == KeyStatusType::statusPublickKeyExist)
-                Locks[sourceAddress] = KeyStatusType::statusNone;
+                BleLockClient::Locks[sourceAddress] = KeyStatusType::statusNone;
             else
-                Locks[sourceAddress] = KeyStatusType::statusEnd;
+                BleLockClient::Locks[sourceAddress] = KeyStatusType::statusEnd;
         }
         return nullptr;
     }
@@ -98,13 +98,13 @@ protected:
         Serial.printf("Deserialized status: %d  key:%s\n", status, key.c_str());
     }
     MessageBase *processRequest(void *context) override {
-        auto lock = static_cast<BleLock *>(context);
+        auto lock = static_cast<BleLockClient *>(context);
         //isOkRes = true;
         //lock->secureConnection.SetAESKey(sourceAddress,key); 
         if (status)
-            Locks[sourceAddress] = KeyStatusType::statusOpenCommand;
+            BleLockClient::Locks[sourceAddress] = KeyStatusType::statusOpenCommand;
         else
-            Locks[sourceAddress] = KeyStatusType::statusEnd;// fail
+            BleLockClient::Locks[sourceAddress] = KeyStatusType::statusEnd;// fail
         return nullptr;
     }
 };
@@ -206,7 +206,7 @@ public:
         randomField = randomFieldVal;
     }
     MessageBase *processRequest(void *context) override {
-        auto lock = static_cast<BleLock *>(context);
+        auto lock = static_cast<BleLockClient *>(context);
         //if (xSemaphoreTake(lock->bleMutex, portMAX_DELAY) == pdTRUE) {
         //    lock->awaitingKeys.insert(key);
         //    xSemaphoreGive(lock->bleMutex);
@@ -222,7 +222,7 @@ public:
         return res;
     }
 
-    std::string getEncryptedCommand (BleLock *lock)
+    std::string getEncryptedCommand (BleLockClient *lock)
     {
         return lock->secureConnection.encryptMessageAES(randomField,"UUID");;
     }
@@ -346,13 +346,13 @@ protected:
         Serial.printf("Deserialized key:%s\n", key.c_str());
     }
     MessageBase *processRequest(void *context) override {
-        auto lock = static_cast<BleLock *>(context);
+        auto lock = static_cast<BleLockClient *>(context);
 
         auto pubKey = SecureConnection::hex2vector(key);
         std::pair pair (pubKey,pubKey);
         lock->secureConnection.keys[sourceAddress] = pair;
         lock->secureConnection.SaveRSAKeys();
-        Locks[sourceAddress] = KeyStatusType::statusPublickKeyExist;
+        BleLockClient::Locks[sourceAddress] = KeyStatusType::statusPublickKeyExist;
         return nullptr;
     }
 
@@ -383,7 +383,7 @@ protected:
         Serial.printf("Deserialized status: %d  key:%s\n", status, key.c_str());
     }
     MessageBase *processRequest(void *context) override {
-        auto lock = static_cast<BleLock *>(context);
+        auto lock = static_cast<BleLockClient *>(context);
         if (status) //handshake suceeded  check key and send Ok
         {
             bool bChkResult = false;
