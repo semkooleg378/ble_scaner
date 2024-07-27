@@ -1,9 +1,20 @@
-#include "MessageBase.h"
+#include <MessageBase.h>
 #include "BleLockClient.h"
 
 #define MessageMaxDelay 30000
 
 extern volatile bool isOkRes;
+
+enum class MessageTypeReg {
+    resOk,
+    reqRegKey,
+    OpenRequest, 
+    SecurityCheckRequestest,
+    OpenCommand,
+    resKey, 
+    HelloRequest,
+    ReceivePublic
+};
 
 /*enum KeyStatusType
 {
@@ -26,12 +37,12 @@ public:
     bool status{};
 
     ResOk() {
-        type = MessageType::resOk;
+        type = (MessageType)MessageTypeReg::resOk;
         requestUUID = generateUUID();
     }
 
     explicit ResOk(bool status) : status(status) {
-        type = MessageType::resOk;
+        type = (MessageType)MessageTypeReg::resOk;
     }
 
 protected:
@@ -46,6 +57,7 @@ protected:
     }
     MessageBase *processRequest(void *context) override {
         auto lock = static_cast<BleLockClient *>(context);
+        isFinalMessage = true;
         if (status)
         {
             if (LocksLastCall[sourceAddress] == KeyStatusType::statusNone)
@@ -77,12 +89,12 @@ public:
     std::string key{};
 
     ResKey() {
-        type = MessageType::resKey;
+        type = (MessageType)MessageTypeReg::resKey;
         requestUUID = generateUUID();
     }
 
     explicit ResKey(bool status, std::string newKey) : status(status), key(newKey) {
-        type = MessageType::resKey;
+        type = (MessageType)MessageTypeReg::resKey;
     }
 
 protected:
@@ -101,6 +113,8 @@ protected:
         auto lock = static_cast<BleLockClient *>(context);
         //isOkRes = true;
         //lock->secureConnection.SetAESKey(sourceAddress,key); 
+        isFinalMessage = true;
+
         if (status)
             BleLockClient::Locks[sourceAddress] = KeyStatusType::statusOpenCommand;
         else
@@ -116,7 +130,7 @@ public:
     std::string key;
 
     ReqRegKey() {
-        type = MessageType::reqRegKey;
+        type = (MessageType)MessageTypeReg::reqRegKey;
         requestUUID = generateUUID();
     }
 
@@ -153,7 +167,7 @@ public:
     std::string randomField;
 
     OpenCommand() {
-        type = MessageType::OpenCommand;
+        type = (MessageType)MessageTypeReg::OpenCommand;
         requestUUID = generateUUID();
     }
 
@@ -197,7 +211,7 @@ public:
     std::string randomField;
 
     SecurityCheckRequestest() {
-        type = MessageType::SecurityCheckRequestest;
+        type = (MessageType)MessageTypeReg::SecurityCheckRequestest;
         requestUUID = generateUUID();
     }
 
@@ -247,7 +261,7 @@ public:
     std::string randomField;
 
     OpenRequest() {
-        type = MessageType::OpenRequest;
+        type = (MessageType)MessageTypeReg::OpenRequest;
         requestUUID = generateUUID();
     }
 
@@ -328,11 +342,11 @@ public:
     std::string key;
 
     ReceivePublic() {
-        type = MessageType::ReceivePublic;
+        type = (MessageType)MessageTypeReg::ReceivePublic;
     }
 
     explicit ReceivePublic(std::string newKey) :  key(newKey) {
-        type = MessageType::ReceivePublic;
+        type = (MessageType)MessageTypeReg::ReceivePublic;
     }
 protected:
 
@@ -346,6 +360,7 @@ protected:
         Serial.printf("Deserialized key:%s\n", key.c_str());
     }
     MessageBase *processRequest(void *context) override {
+        isFinalMessage = true;
         auto lock = static_cast<BleLockClient *>(context);
 
         auto pubKey = SecureConnection::hex2vector(key);
@@ -364,11 +379,11 @@ public:
     std::string key;
 
     HelloRequest() {
-        type = MessageType::HelloRequest;
+        type = (MessageType)MessageTypeReg::HelloRequest;
     }
 
     explicit HelloRequest(bool status, std::string newKey) : status(status), key(newKey) {
-        type = MessageType::HelloRequest;
+        type = (MessageType)MessageTypeReg::HelloRequest;
     }
 protected:
     void serializeExtraFields(json &doc) override {
